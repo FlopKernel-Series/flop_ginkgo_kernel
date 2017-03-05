@@ -72,9 +72,9 @@ static inline void rcu_seq_set_state(unsigned long *sp, int newstate)
 /* Adjust sequence number for start of update-side operation. */
 static inline void rcu_seq_start(unsigned long *sp)
 {
-	WRITE_ONCE(*sp, *sp + 1);
 	smp_mb(); /* Ensure update-side operation after counter increment. */
 	WARN_ON_ONCE(rcu_seq_state(*sp) != 1);
+	WRITE_ONCE(*sp, *sp + 1);
 }
 
 /* Compute the end-of-grace-period value for the specified sequence number. */
