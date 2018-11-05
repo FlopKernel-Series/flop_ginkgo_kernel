@@ -144,6 +144,10 @@
  *	Parse a string of security data filling in the opts structure
  *	@options string containing all mount options known by the LSM
  *	@opts binary data structure usable by the LSM
+ * @move_mount:
+ *	Check permission before a mount is moved.
+ *	@from_path indicates the mount that is going to be moved.
+ *	@to_path indicates the mountpoint that will be mounted upon.
  * @dentry_init_security:
  *	Compute a context for a dentry as the inode is not yet available
  *	since NFSv4 has no label backed by an EA anyway.
@@ -1446,6 +1450,7 @@ union security_list_options {
 					unsigned long kern_flags,
 					unsigned long *set_kern_flags);
 	int (*sb_parse_opts_str)(char *options, struct security_mnt_opts *opts);
+	int (*move_mount)(const struct path *from_path, const struct path *to_path);
 	int (*dentry_init_security)(struct dentry *dentry, int mode,
 					const struct qstr *name, void **ctx,
 					u32 *ctxlen);
@@ -1779,6 +1784,7 @@ struct security_hook_heads {
 	struct list_head sb_set_mnt_opts;
 	struct list_head sb_clone_mnt_opts;
 	struct list_head sb_parse_opts_str;
+	struct list_head move_mount;
 	struct list_head dentry_init_security;
 	struct list_head dentry_create_files_as;
 #ifdef CONFIG_SECURITY_PATH
