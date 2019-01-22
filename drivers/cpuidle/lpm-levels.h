@@ -137,7 +137,7 @@ uint32_t *get_per_cpu_min_residency(int cpu);
 extern struct lpm_cluster *lpm_root_node;
 
 #if defined(CONFIG_SMP)
-extern DEFINE_PER_CPU(bool, pending_ipi);
+DECLARE_PER_CPU(bool, pending_ipi);
 static inline bool is_IPI_pending(const struct cpumask *mask)
 {
 	unsigned int cpu;
