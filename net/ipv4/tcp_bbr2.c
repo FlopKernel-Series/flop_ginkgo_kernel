@@ -213,7 +213,7 @@ struct bbr {
 		u32	bw_probe_rand_us:26,	/* usecs: 0..2^26-1 (67 secs) */
 			undo:1,			/* boolean */
 			cwnd_min_cap:3,		/* max allowed value: 7 */
-			unused5:2;
+			ecn_bw_lo:1;		/* boolean */
 		u32	ecn_reprobe_gain:9,	/* max allowed value: 511 */
 			unused6:23;
 	} params;
@@ -1594,7 +1594,7 @@ static void bbr_adapt_lower_bounds(struct sock *sk,
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct bbr *bbr = inet_csk_ca(sk);
-	u32 ecn_cut, ecn_inflight_lo, beta;
+	u32 ecn_cut, ecn_inflight_lo, ecn_bw_lo, beta;
 
 	/* We only use lower-bound estimates when not probing bw.
 	 * When probing we need to push inflight higher to probe bw.
@@ -1608,11 +1608,16 @@ static void bbr_adapt_lower_bounds(struct sock *sk,
 		ecn_cut = (BBR_UNIT -
 			   ((bbr->ecn_alpha * bbr->params.ecn_factor) >>
 			    BBR_SCALE));
+		if (bbr->params.ecn_bw_lo && bbr->bw_lo == ~0U)
+			bbr->bw_lo = bbr_max_bw(sk);
 		if (bbr->inflight_lo == ~0U)
 			bbr->inflight_lo = tp->snd_cwnd;
 		ecn_inflight_lo = (u64)bbr->inflight_lo * ecn_cut >> BBR_SCALE;
+		if (bbr->params.ecn_bw_lo)
+			ecn_bw_lo = (u64)bbr->bw_lo     * ecn_cut >> BBR_SCALE;
 	} else {
 		ecn_inflight_lo = ~0U;
+		ecn_bw_lo = ~0U;
 	}
 
 	/* Loss response. */
@@ -1635,6 +1640,8 @@ static void bbr_adapt_lower_bounds(struct sock *sk,
 
 	/* Adjust to the lower of the levels implied by loss or ECN. */
 	bbr->inflight_lo = min(bbr->inflight_lo, ecn_inflight_lo);
+	if (bbr->params.ecn_bw_lo)
+		bbr->bw_lo = min(bbr->bw_lo,     ecn_bw_lo);
 
 	bbr_reset_packets_exited(sk, rs);  /* prepare gentle cwnd decrease */
 }
@@ -2192,6 +2199,9 @@ static u32 bbr_ecn_max_rtt_us = 5000;
  */
 static u32 bbr_ecn_reprobe_gain;
 
+/* Should we react to ECN by cutting rate as well as inflight? */
+static bool bbr_ecn_bw_lo = true;	/* default: enabled */
+
 /* Estimate bw probing has gone too far if loss rate exceeds this level. */
 static u32 bbr_loss_thresh = BBR_UNIT * 2 / 100;  /* 2% loss */
 
@@ -2255,6 +2265,7 @@ module_param_named(ecn_factor,           bbr_ecn_factor,           uint, 0644);
 module_param_named(ecn_thresh,           bbr_ecn_thresh,           uint, 0644);
 module_param_named(ecn_max_rtt_us,       bbr_ecn_max_rtt_us,       uint, 0644);
 module_param_named(ecn_reprobe_gain,     bbr_ecn_reprobe_gain,     uint, 0644);
+module_param_named(ecn_bw_lo,            bbr_ecn_bw_lo,            bool, 0644);
 module_param_named(loss_thresh,          bbr_loss_thresh,          uint, 0664);
 module_param_named(full_loss_cnt,        bbr_full_loss_cnt,        uint, 0664);
 module_param_named(full_ecn_cnt,         bbr_full_ecn_cnt,         uint, 0664);
@@ -2281,6 +2292,7 @@ static void bbr_init(struct sock *sk)
 	bbr->params.ecn_thresh = min_t(u32, 0xFFU, bbr_ecn_thresh);
 	bbr->params.ecn_max_rtt_us = min_t(u32, 0x7ffffU, bbr_ecn_max_rtt_us);
 	bbr->params.ecn_reprobe_gain = min_t(u32, 0x1FF, bbr_ecn_reprobe_gain);
+	bbr->params.ecn_bw_lo = bbr_ecn_bw_lo ? 1 : 0;
 	bbr->params.loss_thresh = min_t(u32, 0xFFU, bbr_loss_thresh);
 	bbr->params.full_loss_cnt = min_t(u32, 0xFU, bbr_full_loss_cnt);
 	bbr->params.full_ecn_cnt = min_t(u32, 0x3U, bbr_full_ecn_cnt);
