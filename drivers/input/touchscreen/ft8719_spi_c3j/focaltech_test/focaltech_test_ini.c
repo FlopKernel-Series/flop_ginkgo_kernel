@@ -736,7 +736,7 @@ static int init_node_valid(void)
         for (cnt = 0; cnt < node_num; cnt++) {
             i = cnt / chy + 1;
             j = cnt % chy + 1;
-            snprintf(str, MAX_KEYWORD_VALUE_LEN, "InvalidNode[%d][%d]", i, j);
+            snprintf(str, sizeof(str), "InvalidNode[%d][%d]", i, j);
             get_keyword_value("INVALID_NODE", str, &tdata->node_valid[cnt]);
         }
     }
@@ -749,7 +749,7 @@ static int init_node_valid(void)
         for (cnt = 0; cnt < node_num; cnt++) {
             i = (cnt >= chy) ? 2 : 1;
             j = (cnt >= chy) ? (cnt - chy + 1) : (cnt + 1);
-            snprintf(str, MAX_KEYWORD_VALUE_LEN, "InvalidNodeS[%d][%d]", i, j);
+            snprintf(str, sizeof(str), "InvalidNodeS[%d][%d]", i, j);
             get_keyword_value("INVALID_NODES", str, &tdata->node_valid_sc[cnt]);
         }
     }
