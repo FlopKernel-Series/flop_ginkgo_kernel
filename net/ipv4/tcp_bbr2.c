@@ -2359,7 +2359,6 @@ static void bbr_skb_marked_lost(struct sock *sk, const struct sk_buff *skb)
 	memset(&rs, 0, sizeof(rs));
 	rs.tx_in_flight = scb->tx.in_flight;
 	rs.lost = tp->lost - scb->tx.lost;
-	rs.delivered_ce = tp->delivered_ce - scb->tx.delivered_ce;
 	rs.is_app_limited = scb->tx.is_app_limited;
 	if (bbr_is_inflight_too_high(sk, &rs)) {
 		rs.tx_in_flight = bbr_inflight_hi_from_lost_skb(sk, &rs, skb);
