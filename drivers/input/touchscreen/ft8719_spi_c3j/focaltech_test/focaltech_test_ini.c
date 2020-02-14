@@ -1,5 +1,5 @@
 /************************************************************************
-* Copyright (C) 2012-2019, Focaltech Systems (R)£¬All Rights Reserved.
+* Copyright (C) 2012-2019, Focaltech Systems (R)ï¿½ï¿½All Rights Reserved.
 * Copyright (C) 2021 XiaoMi, Inc.
 *
 * File Name: focaltech_test_ini.c
@@ -119,7 +119,7 @@ static int fts_strncmp(const char *cs, const char *ct, int count)
     u8 c1 = 0, c2 = 0;
 
     while (count) {
-        if  ((cs == '\0') || (ct == '\0'))
+        if  ((cs == NULL) || (ct == NULL))
             return -1;
         c1 = TOLOWER(*cs++);
         c2 = TOLOWER(*ct++);
