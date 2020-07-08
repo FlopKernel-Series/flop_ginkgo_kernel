@@ -332,15 +332,6 @@ static u32 bbr_full_bw_cnt = 3;
 
 static u32 bbr_flags;		/* Debugging related stuff */
 
-/* Whether to debug using printk.
- */
-static bool bbr_debug_with_printk;
-
-/* Whether to debug using ftrace event tcp:tcp_bbr_event.
- * Ignored when bbr_debug_with_printk is set.
- */
-static bool bbr_debug_ftrace;
-
 /* Experiment: each cycle, try to hold sub-unity gain until inflight <= BDP. */
 static bool bbr_drain_to_target = true;		/* default: enabled */
 
@@ -352,8 +343,6 @@ static bool bbr_precise_ece_ack = true;		/* default: enabled */
  * (2^(16+14) B)/(1024 B/packet) = 1M packets.
  */
 static u32 bbr_cwnd_warn_val	= 1U << 20;
-
-static u16 bbr_debug_port_mask;
 
 /* BBR module parameters. These are module parameters only in Google prod.
  * Upstream these are intentionally not module parameters.
@@ -404,10 +393,7 @@ module_param_named(cwnd_min_target,   bbr_cwnd_min_target,   uint,   0644);
 module_param_named(probe_rtt_cwnd_gain,
 		   bbr_probe_rtt_cwnd_gain,		     uint,   0664);
 module_param_named(cwnd_warn_val,     bbr_cwnd_warn_val,     uint,   0664);
-module_param_named(debug_port_mask,   bbr_debug_port_mask,   ushort, 0644);
 module_param_named(flags,             bbr_flags,             uint,   0644);
-module_param_named(debug_ftrace,      bbr_debug_ftrace, bool,   0644);
-module_param_named(debug_with_printk, bbr_debug_with_printk, bool,   0644);
 module_param_named(min_rtt_win_sec,   bbr_min_rtt_win_sec,   uint,   0644);
 module_param_named(probe_rtt_mode_ms, bbr_probe_rtt_mode_ms, uint,   0644);
 module_param_named(probe_rtt_win_ms,  bbr_probe_rtt_win_ms,  uint,   0644);
@@ -490,148 +476,7 @@ static u64 bbr_bw_bytes_per_sec(struct sock *sk, u64 rate)
 	return bbr_rate_bytes_per_sec(sk, rate, BBR_UNIT, 0);
 }
 
-static u64 bbr_rate_kbps(struct sock *sk, u64 rate)
-{
-	rate = bbr_bw_bytes_per_sec(sk, rate);
-	rate *= 8;
-	do_div(rate, 1000);
-	return rate;
-}
-
 static u32 bbr_tso_segs_goal(struct sock *sk);
-static void bbr_debug(struct sock *sk, u32 acked,
-		      const struct rate_sample *rs, struct bbr_context *ctx)
-{
-	static const char ca_states[] = {
-		[TCP_CA_Open]		= 'O',
-		[TCP_CA_Disorder]	= 'D',
-		[TCP_CA_CWR]		= 'C',
-		[TCP_CA_Recovery]	= 'R',
-		[TCP_CA_Loss]		= 'L',
-	};
-	static const char mode[] = {
-		'G',  /* Growing   - BBR_STARTUP */
-		'D',  /* Drain     - BBR_DRAIN */
-		'W',  /* Window    - BBR_PROBE_BW */
-		'M',  /* Min RTT   - BBR_PROBE_RTT */
-	};
-	static const char ack_phase[] = { /* bbr_ack_phase strings */
-		'I',	/* BBR_ACKS_INIT	   - 'Init' */
-		'R',	/* BBR_ACKS_REFILLING	   - 'Refilling' */
-		'B',	/* BBR_ACKS_PROBE_STARTING - 'Before' */
-		'F',	/* BBR_ACKS_PROBE_FEEDBACK - 'Feedback' */
-		'A',	/* BBR_ACKS_PROBE_STOPPING - 'After' */
-	};
-	struct tcp_sock *tp = tcp_sk(sk);
-	struct bbr *bbr = inet_csk_ca(sk);
-	const u32 una = tp->snd_una - bbr->debug.snd_isn;
-	const u32 fack = tcp_highest_sack_seq(tp);
-	const u16 dport = ntohs(inet_sk(sk)->inet_dport);
-	bool is_port_match = (bbr_debug_port_mask &&
-			      ((dport & bbr_debug_port_mask) == 0));
-	char debugmsg[320];
-
-	if (sk->sk_state == TCP_SYN_SENT)
-		return;  /* no bbr_init() yet if SYN retransmit -> CA_Loss */
-
-	if (!tp->snd_cwnd || tp->snd_cwnd > bbr_cwnd_warn_val) {
-		char addr[INET6_ADDRSTRLEN + 10] = { 0 };
-
-		if (sk->sk_family == AF_INET)
-			snprintf(addr, sizeof(addr), "%pI4:%u",
-				 &inet_sk(sk)->inet_daddr, dport);
-		else if (sk->sk_family == AF_INET6)
-			snprintf(addr, sizeof(addr), "%pI6:%u",
-				 &sk->sk_v6_daddr, dport);
-
-		WARN_ONCE(1,
-			"BBR %s cwnd alert: %u "
-			"snd_una: %u ca: %d pacing_gain: %u cwnd_gain: %u "
-			"bw: %u rtt: %u min_rtt: %u "
-			"acked: %u tso_segs: %u "
-			"bw: %d %ld %d pif: %u\n",
-			addr, tp->snd_cwnd,
-			una, inet_csk(sk)->icsk_ca_state,
-			bbr->pacing_gain, bbr->cwnd_gain,
-			bbr_max_bw(sk), (tp->srtt_us >> 3), bbr->min_rtt_us,
-			acked, bbr_tso_segs_goal(sk),
-			rs->delivered, rs->interval_us, rs->is_retrans,
-			tcp_packets_in_flight(tp));
-	}
-
-	if (likely(!bbr_debug_with_printk && !bbr_debug_ftrace))
-		return;
-
-	if (!sock_flag(sk, SOCK_DBG) && !is_port_match)
-		return;
-
-	if (!ctx->log && !tp->app_limited && !(bbr_flags & FLAG_DEBUG_VERBOSE))
-		return;
-
-	if (ipv4_is_loopback(inet_sk(sk)->inet_daddr) &&
-	    !(bbr_flags & FLAG_DEBUG_LOOPBACK))
-		return;
-
-	snprintf(debugmsg, sizeof(debugmsg) - 1,
-		 "BBR %pI4:%-5u %5u,%03u:%-7u %c "
-		 "%c %2u br %2u cr %2d rtt %5ld d %2d i %5ld mrtt %d %cbw %llu "
-		 "bw %llu lb %llu ib %llu qb %llu "
-		 "a %u if %2u %c %c dl %u l %u al %u # %u t %u %c %c "
-		 "lr %d er %d ea %d bwl %lld il %d ih %d c %d "
-		 "v %d %c %u %c %s\n",
-		 &inet_sk(sk)->inet_daddr, dport,
-		 una / 1000, una % 1000, fack - tp->snd_una,
-		 ca_states[inet_csk(sk)->icsk_ca_state],
-		 bbr->debug.undo ? '@' : mode[bbr->mode],
-		 tp->snd_cwnd,
-		 bbr_extra_acked(sk),	/* br (legacy): extra_acked */
-		 rs->tx_in_flight,	/* cr (legacy): tx_inflight */
-		 rs->rtt_us,
-		 rs->delivered,
-		 rs->interval_us,
-		 bbr->min_rtt_us,
-		 rs->is_app_limited ? '_' : 'l',
-		 bbr_rate_kbps(sk, ctx->sample_bw), /* lbw: latest sample bw */
-		 bbr_rate_kbps(sk, bbr_max_bw(sk)), /* bw: max bw */
-		 0ULL,				    /* lb: [obsolete] */
-		 0ULL,				    /* ib: [obsolete] */
-		 (u64)sk->sk_pacing_rate * 8 / 1000,
-		 acked,
-		 tcp_packets_in_flight(tp),
-		 rs->is_ack_delayed ? 'd' : '.',
-		 bbr->round_start ? '*' : '.',
-		 tp->delivered, tp->lost,
-		 tp->app_limited,
-		 0,			    	    /* #: [obsolete] */
-		 ctx->target_cwnd,
-		 tp->reord_seen ? 'r' : '.',  /* r: reordering seen? */
-		 ca_states[bbr->prev_ca_state],
-		 (rs->lost + rs->delivered) > 0 ?
-		 (1000 * rs->lost /
-		  (rs->lost + rs->delivered)) : 0,    /* lr: loss rate x1000 */
-		 (rs->delivered) > 0 ?
-		 (1000 * rs->delivered_ce /
-		  (rs->delivered)) : 0,		      /* er: ECN rate x1000 */
-		 1000 * bbr->ecn_alpha >> BBR_SCALE,  /* ea: ECN alpha x1000 */
-		 bbr->bw_lo == ~0U ?
-		   -1 : (s64)bbr_rate_kbps(sk, bbr->bw_lo), /* bwl */
-		 bbr->inflight_lo,	/* il */
-		 bbr->inflight_hi,	/* ih */
-		 bbr->bw_probe_up_cnt,	/* c */
-		 2,			/* v: version */
-		 bbr->debug.event,
-		 bbr->cycle_idx,
-		 ack_phase[bbr->ack_phase],
-		 bbr->bw_probe_samples ? "Y" : "N");
-	debugmsg[sizeof(debugmsg) - 1] = 0;
-
-	/* printk takes a higher precedence. */
-	if (bbr_debug_with_printk)
-		printk(KERN_DEBUG "%s", debugmsg);
-
-	if (unlikely(bbr->debug.undo))
-		bbr->debug.undo = 0;
-}
 
 /* Convert a BBR bw and gain factor to a pacing rate in bytes per second. */
 static unsigned long bbr_bw_to_pacing_rate(struct sock *sk, u32 bw, int gain)
@@ -2284,7 +2129,6 @@ out:
 	bbr->loss_in_cycle |= rs->lost > 0;
 	bbr->ecn_in_cycle  |= rs->delivered_ce > 0;
 
-	bbr_debug(sk, rs->acked_sacked, rs, &ctx);
 }
 
 /* Module parameters that are settable by TCP_CONGESTION_PARAMS are declared
@@ -2628,9 +2472,6 @@ static void bbr2_set_state(struct sock *sk, u8 new_state)
 	struct bbr *bbr = inet_csk_ca(sk);
 
 	if (new_state == TCP_CA_Loss) {
-		struct rate_sample rs = { .losses = 1 };
-		struct bbr_context ctx = { 0 };
-
 		bbr->prev_ca_state = TCP_CA_Loss;
 		bbr->full_bw = 0;
 		if (!bbr2_is_probing_bandwidth(sk) && bbr->inflight_lo == ~0U) {
@@ -2641,7 +2482,6 @@ static void bbr2_set_state(struct sock *sk, u8 new_state)
 			WARN_ON_ONCE(bbr->prior_cwnd == ~0U);
 			bbr->inflight_lo = bbr->prior_cwnd;
 		}
-		bbr_debug(sk, 0, &rs, &ctx);
 	} else if (bbr->prev_ca_state == TCP_CA_Loss &&
 		   new_state != TCP_CA_Loss) {
 		WARN_ON_ONCE(bbr->prior_cwnd == 0);
