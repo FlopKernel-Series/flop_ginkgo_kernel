@@ -103,31 +103,7 @@ static bool delay_gesture = false;
 /*****************************************************************************
 * Global variable or extern global variabls/functions
 *****************************************************************************/
-extern void set_lcd_reset_gpio_keep_high(bool en);
 extern int32_t fts_ts_enable_regulator(bool en);
-
-int lct_fts_tp_gesture_callback(bool flag)
-{
-    if (fts_data->suspended && !delay_gesture) {
-        delay_gesture = true;
-        FTS_INFO("The gesture mode will be %s the next time you wakes up.", flag?"enabled":"disabled");
-        return 0;
-    }
-    if (flag) {
-        fts_gesture_data.mode = ENABLE;
-        if (fts_ts_enable_regulator(true) < 0)
-            FTS_ERROR("Failed to enable regulator");
-        //set_lcd_reset_gpio_keep_high(true);
-        FTS_INFO("enable gesture mode");
-    } else {
-        fts_gesture_data.mode = DISABLE;
-        if (fts_ts_enable_regulator(false) < 0)
-            FTS_ERROR("Failed to diable regulator");
-        //set_lcd_reset_gpio_keep_high(false);
-        FTS_INFO("disable gesture mode");
-    }
-    return 0;
-}
 
 bool fts_ts_is_gesture_mode(void)
 {
@@ -162,11 +138,9 @@ static ssize_t fts_gesture_store(
     mutex_lock(&input_dev->mutex);
     if (FTS_SYSFS_ECHO_ON(buf)) {
         FTS_DEBUG("enable gesture");
-        set_lcd_reset_gpio_keep_high(true);
         fts_gesture_data.mode = ENABLE;
     } else if (FTS_SYSFS_ECHO_OFF(buf)) {
         FTS_DEBUG("disable gesture");
-        set_lcd_reset_gpio_keep_high(false);
         fts_gesture_data.mode = DISABLE;
     }
     mutex_unlock(&input_dev->mutex);
@@ -418,7 +392,6 @@ int fts_gesture_suspend(struct fts_ts_data *ts_data)
     u8 state = 0xFF;
 
     FTS_INFO("gesture suspend...");
-    set_lcd_reset_gpio_keep_high(true);
     /* gesture not enable, return immediately */
     if (fts_gesture_data.mode == DISABLE) {
         FTS_INFO("gesture is disabled");
@@ -465,7 +438,6 @@ int fts_gesture_resume(struct fts_ts_data *ts_data)
     /* gesture not enable, return immediately */
     if (fts_gesture_data.mode == DISABLE) {
         if (delay_gesture) {
-            lct_fts_tp_gesture_callback(get_lct_tp_gesture_status());
             delay_gesture = false;
             return 0;
         } else {
@@ -501,7 +473,6 @@ int fts_gesture_resume(struct fts_ts_data *ts_data)
     FTS_INFO("resume from gesture successfully");
 
     if (delay_gesture) {
-        lct_fts_tp_gesture_callback(get_lct_tp_gesture_status());
         delay_gesture = false;
     }
 
@@ -514,10 +485,20 @@ int fts_gesture_switch(struct input_dev *dev, unsigned int type, unsigned int co
 {
     FTS_INFO("Enter. type = %u, code = %u, value = %d", type, code, value);
     if (type == EV_SYN && code == SYN_CONFIG) {
-        if (value == WAKEUP_OFF)
-            lct_fts_tp_gesture_callback(false);
-        else if (value == WAKEUP_ON)
-            lct_fts_tp_gesture_callback(true);
+        if (fts_data->suspended && !delay_gesture) {
+            delay_gesture = true;
+        }
+        if (value == WAKEUP_OFF) {
+            fts_gesture_data.mode = DISABLE;
+            if (fts_ts_enable_regulator(false) < 0)
+                FTS_ERROR("Failed to diable regulator");
+            FTS_INFO("disable gesture mode");
+        } else if (value == WAKEUP_ON) {
+            fts_gesture_data.mode = ENABLE;
+            if (fts_ts_enable_regulator(true) < 0)
+                FTS_ERROR("Failed to enable regulator");
+            FTS_INFO("enable gesture mode");
+        }
     }
     FTS_INFO("Exit");
     return 0;

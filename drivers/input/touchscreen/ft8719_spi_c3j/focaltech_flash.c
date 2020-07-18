@@ -845,7 +845,6 @@ static void fts_fwupg_work(struct work_struct *work)
         msleep(50);
         ret = fts_read_reg(FTS_REG_CHIP_ID, &chip_id);
         FTS_INFO("read chip id:0x%02x", chip_id);
-        lct_fts_get_tpfwver(NULL);
     }
 }
 

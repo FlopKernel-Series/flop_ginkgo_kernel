@@ -82,20 +82,6 @@ static int fts_ts_resume(struct device *dev);
 static int32_t fts_ts_get_regulator(bool get);
 int32_t fts_ts_enable_regulator(bool en);
 #endif
-typedef int (*lct_tp_reset_enable_cb_t)(bool en);
-extern void set_tp_reset_gpio_callback(lct_tp_reset_enable_cb_t p_callback);
-
-int lct_fts_tp_reset_enable(bool en)
-{
-    if (en) {
-        FTS_INFO("tp_reset gpio pull high");
-        gpio_direction_output(fts_data->pdata->reset_gpio, 1);
-    } else {
-        FTS_INFO("tp_reset gpio pull down");
-        gpio_direction_output(fts_data->pdata->reset_gpio, 0);
-    }
-    return 0;
-}
 
 #if FTS_GESTURE_EN
 extern bool fts_ts_is_gesture_mode(void);
@@ -1565,11 +1551,6 @@ static int fts_ts_probe_entry(struct fts_ts_data *ts_data)
     }
 #endif
 
-    //longcheer touch procfs
-    ret = lct_create_procfs(ts_data);
-    if (ret < 0) {
-        FTS_ERROR("create procfs node fail");
-    }
 
 #if FTS_SYSFS_NODE_EN
     ret = fts_create_sysfs(ts_data);
@@ -1638,8 +1619,6 @@ static int fts_ts_probe_entry(struct fts_ts_data *ts_data)
     register_early_suspend(&ts_data->early_suspend);
 #endif
 
-    set_tp_reset_gpio_callback(lct_fts_tp_reset_enable);
-
     FTS_FUNC_EXIT();
     return 0;
 
@@ -1683,9 +1662,6 @@ static int fts_ts_remove_entry(struct fts_ts_data *ts_data)
 #if FTS_APK_NODE_EN
     fts_release_apk_debug_channel(ts_data);
 #endif
-
-    //remove longcheer procfs
-    lct_remove_procfs(ts_data);
 
 #if FTS_SYSFS_NODE_EN
     fts_remove_sysfs(ts_data);

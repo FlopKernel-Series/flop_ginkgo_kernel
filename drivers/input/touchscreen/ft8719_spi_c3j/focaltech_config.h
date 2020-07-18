@@ -175,16 +175,6 @@
  */
 #define FTS_POWER_SOURCE_CUST_EN                0
 
-/*
- * enable/disable 'grip area' feature
- */
-#define LCT_TP_GRIP_AREA_EN                     1
-
-/*
- * enable/disable touchpad
- */
-#define LCT_TP_WORK_EN                          1
-
 /****************************************************/
 
 /********************** Upgrade ****************************/

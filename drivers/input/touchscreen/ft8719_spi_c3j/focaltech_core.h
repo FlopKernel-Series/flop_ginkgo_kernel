@@ -64,18 +64,8 @@
 #include <linux/dma-mapping.h>
 #include "focaltech_common.h"
 
-// include longcheer header
-#include "../lct_tp_info.h"
-#include "../lct_tp_selftest.h"
 #if FTS_GESTURE_EN
 #include <linux/pm_runtime.h>
-#include "../lct_tp_gesture.h"
-#endif
-#if LCT_TP_WORK_EN
-#include "../lct_tp_work.h"
-#endif
-#if LCT_TP_GRIP_AREA_EN
-#include "../lct_tp_grip_area.h"
 #endif
 
 /*****************************************************************************
@@ -245,17 +235,6 @@ int fts_create_apk_debug_channel(struct fts_ts_data *);
 void fts_release_apk_debug_channel(struct fts_ts_data *);
 #endif
 
-/* Longcheer procfs */
-int lct_create_procfs(struct fts_ts_data *ts_data);
-int lct_remove_procfs(struct fts_ts_data *ts_data);
-
-/* Longcheer get firmware version */
-int lct_fts_get_tpfwver(const char *cmd);
-
-#if FTS_GESTURE_EN
-int lct_fts_tp_gesture_callback(bool flag);
-#endif
-
 /* ADB functions */
 #if FTS_SYSFS_NODE_EN
 int fts_create_sysfs(struct fts_ts_data *ts_data);
@@ -277,7 +256,6 @@ int fts_esdcheck_resume(void);
 #if FTS_TEST_EN
 int fts_test_init(struct fts_ts_data *ts_data);
 int fts_test_exit(struct fts_ts_data *ts_data);
-int lct_tp_selftest_all(void);
 #endif
 
 /* Point Report Check*/
