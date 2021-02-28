@@ -45,8 +45,6 @@
 #define DATA_PACKAGE                0x3F
 #define BUSY_QUERY_TIMEOUT          100
 #define BUSY_QUERY_DELAY            150 /* unit: us */
-#define CS_HIGH_DELAY               150 /* unit: us */
-#define DELAY_AFTER_FIRST_BYTE      30
 #define SPI_HEADER_LENGTH           4
 #define SPI_BUF_LENGTH              256
 
@@ -89,7 +87,6 @@ static int fts_spi_transfer(u8 *tx_buf, u8 *rx_buf, u32 len)
     if (rx_buf)
         xfer[0].rx_buf = &rx_buf[0];
     xfer[0].len = 1;
-    xfer[0].delay_usecs = DELAY_AFTER_FIRST_BYTE;
     spi_message_add_tail(&xfer[0], &msg);
     if (len > 1) {
         xfer[1].tx_buf = &tx_buf[1];
@@ -105,7 +102,6 @@ static int fts_spi_transfer(u8 *tx_buf, u8 *rx_buf, u32 len)
         return ret;
     }
 
-    udelay(CS_HIGH_DELAY);
     return ret;
 }
 
@@ -151,7 +147,6 @@ static int fts_wait_idle(void)
     u8 value[2] = { 0 };
 
     for (i = 0; i < BUSY_QUERY_TIMEOUT; i++) {
-        udelay(BUSY_QUERY_DELAY);
         ret = fts_spi_transfer(cmd, value, 2);
         if (ret >= 0) {
             status = (int)value[1];
@@ -161,6 +156,7 @@ static int fts_wait_idle(void)
                 break;
             }
         }
+		udelay(BUSY_QUERY_DELAY);
     }
 
     if (i >= BUSY_QUERY_TIMEOUT) {
