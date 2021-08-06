@@ -97,6 +97,54 @@
 		qcom,bypass-client-list = <0xa004 0xc004 0xc008>;
 		#cooling-cells = <2>;
 	};
+
+	qcom,msm-thermal-simple {
+		compatible = "qcom,msm-thermal-simple";
+		qcom,poll-ms = <3000>;
+		qcom,start-delay = <5>;
+
+		zone@0 {
+			reg = <0>;
+			qcom,silver-khz = <1804800>;
+			qcom,gold-khz = <2016000>;
+			qcom,trip-deg = <55000>;
+		};
+
+		zone@1 {
+			reg = <1>;
+			qcom,silver-khz = <1804800>;
+			qcom,gold-khz = <1536000>;
+			qcom,trip-deg = <62000>;
+		};
+
+		zone@2 {
+			reg = <2>;
+			qcom,silver-khz = <1420800>;
+			qcom,gold-khz = <1536000>;
+			qcom,trip-deg = <68000>;
+		};
+
+		zone@3 {
+			reg = <3>;
+			qcom,silver-khz = <1305600>;
+			qcom,gold-khz = <1401600>;
+			qcom,trip-deg = <73000>;
+		};
+
+		zone@4 {
+			reg = <4>;
+			qcom,silver-khz = <1305600>;
+			qcom,gold-khz = <1056000>;
+			qcom,trip-deg = <77000>;
+		};
+
+		zone@5 {
+			reg = <5>;
+			qcom,silver-khz = <1017600>;
+			qcom,gold-khz = <1056000>;
+			qcom,trip-deg = <80000>;
+		};
+	};
 };
 
 &thermal_zones {
