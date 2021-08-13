@@ -8,6 +8,7 @@
 #include <linux/iomap.h>
 #include <linux/uio.h>
 #include <linux/blkdev.h>
+#include <linux/dax.h>
 
 #include <trace/events/erofs.h>
 
@@ -369,6 +370,20 @@ static int erofs_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 static const struct iomap_ops erofs_iomap_ops = {
 	.iomap_begin = erofs_iomap_begin,
 };
+
+int erofs_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
+		 u64 start, u64 len)
+{
+	if (erofs_inode_is_data_compressed(EROFS_I(inode)->datalayout)) {
+#ifdef CONFIG_EROFS_FS_ZIP
+		return iomap_fiemap(inode, fieinfo, start, len,
+				    &z_erofs_iomap_report_ops);
+#else
+		return -EOPNOTSUPP;
+#endif
+	}
+	return iomap_fiemap(inode, fieinfo, start, len, &erofs_iomap_ops);
+}
 
 static int erofs_prepare_dio(struct kiocb *iocb, struct iov_iter *to)
 {
