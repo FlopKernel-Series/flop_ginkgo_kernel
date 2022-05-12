@@ -6,6 +6,8 @@
 #include "internal.h"
 #include <linux/prefetch.h>
 #include <linux/iomap.h>
+#include <linux/uio.h>
+#include <linux/blkdev.h>
 
 #include <trace/events/erofs.h>
 
@@ -329,7 +331,7 @@ static sector_t erofs_bmap(struct address_space *mapping, sector_t block)
 }
 
 static int erofs_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
-		unsigned int flags, struct iomap *iomap, struct iomap *srcmap)
+		unsigned int flags, struct iomap *iomap)
 {
 	int ret;
 	struct erofs_map_blocks map;
@@ -406,11 +408,11 @@ static ssize_t erofs_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 
 		if (!err)
 			return iomap_dio_rw(iocb, to, &erofs_iomap_ops,
-					    NULL, 0);
+					    NULL);
 		if (err < 0)
 			return err;
 	}
-	return filemap_read(iocb, to, 0);
+	return generic_file_buffered_read(iocb, to, 0);
 }
 
 /* for uncompressed (aligned) files and raw access for other files */
