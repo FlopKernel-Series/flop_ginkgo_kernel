@@ -8,6 +8,11 @@
 
 #include "internal.h"
 
+enum {
+	Z_EROFS_COMPRESSION_SHIFTED = Z_EROFS_COMPRESSION_MAX,
+	Z_EROFS_COMPRESSION_RUNTIME_MAX
+};
+
 struct z_erofs_decompress_req {
 	struct super_block *sb;
 	struct page **in, **out;
