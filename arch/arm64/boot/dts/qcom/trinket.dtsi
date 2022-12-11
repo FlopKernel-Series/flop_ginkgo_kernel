@@ -1675,7 +1675,7 @@
 
 				msm_cdsp_rm: qcom,msm_cdsp_rm {
 					compatible = "qcom,msm-cdsp-rm";
-					qcom,qos-latency-us = <43>;
+					qcom,qos-latency-us = <67>;
 					qcom,qos-maxhold-ms = <20>;
 					#cooling-cells = <2>;
 				};
