@@ -4348,7 +4348,7 @@ int f2fs_init_post_read_wq(struct f2fs_sb_info *sbi)
 		return 0;
 
 	sbi->post_read_wq = alloc_workqueue("f2fs_post_read_wq",
-						 WQ_UNBOUND | WQ_HIGHPRI,
+						 WQ_HIGHPRI,
 						 num_online_cpus());
 	if (!sbi->post_read_wq)
 		return -ENOMEM;

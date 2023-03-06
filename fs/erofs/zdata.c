@@ -270,7 +270,7 @@ int __init z_erofs_init_zip_subsystem(void)
 		goto out_error_pcluster_pool;
 
 	z_erofs_workqueue = alloc_workqueue("erofs_worker",
-			WQ_UNBOUND | WQ_HIGHPRI, num_possible_cpus());
+			WQ_HIGHPRI, num_possible_cpus());
 	if (!z_erofs_workqueue)
 		goto out_error_workqueue_init;
 
