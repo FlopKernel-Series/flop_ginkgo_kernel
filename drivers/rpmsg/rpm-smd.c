@@ -36,6 +36,7 @@
 #include <linux/of.h>
 #include <linux/of_irq.h>
 #include <linux/of_platform.h>
+#include <linux/suspend.h>
 #include <linux/rbtree.h>
 #include <soc/qcom/rpm-notifier.h>
 #include <soc/qcom/rpm-smd.h>
@@ -1524,6 +1525,23 @@ void msm_rpm_exit_sleep(void)
 }
 EXPORT_SYMBOL(msm_rpm_exit_sleep);
 
+static int rpm_smd_pm_notifier(struct notifier_block *nb, unsigned long event, void *unused)
+{
+	int ret;
+
+	if (event == PM_SUSPEND_PREPARE) {
+		ret = msm_rpm_flush_requests(false);
+		pr_debug("ret = %d\n", ret);
+	}
+
+	/* continue to suspend */
+	return NOTIFY_OK;
+}
+
+static struct notifier_block rpm_smd_pm_nb = {
+	.notifier_call = rpm_smd_pm_notifier,
+};
+
 static int qcom_smd_rpm_callback(struct rpmsg_device *rpdev, void *ptr,
 				int size, void *priv, u32 addr)
 {
@@ -1606,6 +1624,13 @@ static int qcom_smd_rpm_probe(struct rpmsg_device *rpdev)
 	rpm = devm_kzalloc(&rpdev->dev, sizeof(*rpm), GFP_KERNEL);
 	if (!rpm) {
 		probe_status = -ENOMEM;
+		goto fail;
+	}
+
+	ret = register_pm_notifier(&rpm_smd_pm_nb);
+	if (ret) {
+		pr_err("%s: power state notif error %d\n", __func__, ret);
+		probe_status = -ENODEV;
 		goto fail;
 	}
 
