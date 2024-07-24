@@ -1,0 +1,55 @@
+#+TITLE: android_kernel_nethunter
+
+* Table of contents
+:PROPERTIES:
+:TOC:
+:END:
+:CONTENTS:
+- [[#about][About]]
+- [[#usage][Usage]]
+- [[#supported option][Supported Options]]
+- [[#credits][Credits]]
+:END:
+
+* About
+
+A repository that contains a kconfig to enable nethunter support in android kernels.
+
+You would need the appropriate patches for nethunter in which you will find them [[https://gitlab.com/kalilinux/nethunter/build-scripts/kali-nethunter-kernel/-/tree/master/patches][here]]
+
+* Usage
+
+** You can add this to your tree by doing this command
+
+#+BEGIN_SRC shell
+git fetch https://github.com/cyberknight777/android_kernel_nethunter main
+git merge -s ours --no-commit --allow-unrelated-histories --squash FETCH_HEAD
+git read-tree --prefix=nethunter -u FETCH_HEAD
+git commit -m "Imported nethunter/ from https://github.com/cyberknight777/android_kernel_nethunter"
+#+END_SRC
+
+** Then go to arch/yourtargetarchitecture/Kconfig and add this line below:
+
+#+BEGIN_SRC shell   
+source "nethunter/Kconfig"
+#+END_SRC
+
+** Disable this config in menuconfig
+
+=CONFIG_ANDROID_BINDERFS=
+
+** Next you need to enable Basic Nethunter Support option, while the others are purely optional.
+
+* Supported Options
++ =Basic nethunter support= [ consists of sysvipc for postgresql, enabled module support for external modules, hci0 support & mac80211 support ]
++ =Ethernet drivers support=
++ =SDR support=
++ =HID support=
++ =USB support=
++ =WiFi drivers support= [ note only ath9k, mt7601, ralink, realtek and zydas will be enabled ]
+  
+Once that's done feel free to compile and use your kernel which has nethunter support now :)
+
+* Credits
+
+** [[https://kali.org][kali.org]] for their documentation on configuring the kernel for nethunter support.
