@@ -1598,7 +1598,6 @@ static int fts_ts_probe_entry(struct spi_device *client, struct fts_ts_data *ts_
 
 	ts_data->pm_spi_req.type = PM_QOS_REQ_AFFINE_IRQ;
 	ts_data->pm_spi_req.irq = geni_spi_get_master_irq(client);
-	irq_set_perf_affinity(ts_data->pm_spi_req.irq, IRQF_PERF_AFFINE);
 	pm_qos_add_request(&ts_data->pm_spi_req, PM_QOS_CPU_DMA_LATENCY,
 		PM_QOS_DEFAULT_VALUE);
 
