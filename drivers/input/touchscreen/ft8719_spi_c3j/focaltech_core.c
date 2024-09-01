@@ -749,7 +749,7 @@ static int fts_irq_registration(struct fts_ts_data *ts_data)
 	struct fts_ts_platform_data *pdata = ts_data->pdata;
 
 	ts_data->irq = gpio_to_irq(pdata->irq_gpio);
-	pdata->irq_gpio_flags = IRQF_TRIGGER_FALLING | IRQF_ONESHOT | IRQF_PERF_AFFINE;
+	pdata->irq_gpio_flags = IRQF_TRIGGER_FALLING | IRQF_ONESHOT;
 	FTS_INFO("irq:%d, flag:%x", ts_data->irq, pdata->irq_gpio_flags);
 	ret = request_threaded_irq(ts_data->irq, NULL, fts_irq_handler,
 						       pdata->irq_gpio_flags,
@@ -1598,7 +1598,6 @@ static int fts_ts_probe_entry(struct spi_device *client, struct fts_ts_data *ts_
 
 	ts_data->pm_spi_req.type = PM_QOS_REQ_AFFINE_IRQ;
 	ts_data->pm_spi_req.irq = geni_spi_get_master_irq(client);
-	irq_set_perf_affinity(ts_data->pm_spi_req.irq, IRQF_PERF_AFFINE);
 	pm_qos_add_request(&ts_data->pm_spi_req, PM_QOS_CPU_DMA_LATENCY,
 		PM_QOS_DEFAULT_VALUE);
 

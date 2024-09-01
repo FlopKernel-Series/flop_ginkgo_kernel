@@ -1153,11 +1153,6 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 	int ret = 0;
 	cpumask_t allowed_mask;
 
-	/* Don't allow perf-critical threads to have non-perf affinities */
-	if ((p->flags & PF_PERF_CRITICAL) && new_mask != cpu_lp_mask &&
-	    new_mask != cpu_perf_mask)
-		return -EINVAL;
-
 	rq = task_rq_lock(p, &rf);
 	update_rq_clock(rq);
 
@@ -1452,7 +1447,6 @@ void sched_migrate_to_cpumask_end(const struct cpumask *old_mask,
 		struct rq *rq = this_rq();
 
 		raw_spin_lock(&rq->lock);
-		update_rq_clock(rq);
 		do_set_cpus_allowed(p, old_mask);
 		raw_spin_unlock(&rq->lock);
 	}
