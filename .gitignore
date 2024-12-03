@@ -138,3 +138,5 @@ Android.bp
 
 # Ignore script log file
 log.txt
+
+/scripts/module-lto.lds
