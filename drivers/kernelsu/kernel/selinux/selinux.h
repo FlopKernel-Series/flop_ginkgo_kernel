@@ -20,12 +20,6 @@ bool is_zygote(void *cred);
 
 void apply_kernelsu_rules();
 
-#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-u32 ksu_get_zygote_sid(void);
-
-u32 ksu_get_current_sid(void);
-#endif
-
 u32 ksu_get_devpts_sid();
 
 #endif

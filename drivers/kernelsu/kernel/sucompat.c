@@ -365,25 +365,3 @@ void ksu_sucompat_exit()
 	unregister_kprobe(&pts_unix98_lookup_kp);
 #endif
 }
-
-
-#ifdef CONFIG_KSU_SUSFS_SUS_SU
-extern bool ksu_devpts_hook;
-
-void ksu_susfs_disable_sus_su(void) {
-	enable_kprobe(&execve_kp);
-	enable_kprobe(&newfstatat_kp);
-	enable_kprobe(&faccessat_kp);
-	enable_kprobe(&pts_unix98_lookup_kp);
-	ksu_devpts_hook = false;
-}
-
-void ksu_susfs_enable_sus_su(void) {
-	disable_kprobe(&execve_kp);
-	disable_kprobe(&newfstatat_kp);
-	disable_kprobe(&faccessat_kp);
-	disable_kprobe(&pts_unix98_lookup_kp);
-	ksu_devpts_hook = true;
-}
-#endif
-
