@@ -87,7 +87,7 @@ config KSU_SUSFS_ENABLE_LOG
 config KSU_SUSFS_SUS_SU
     bool "Enable SUS-SU in runtime temporarily (experimental)"
     depends on KSU_SUSFS
-    default n
+    default y
     help
       - Allow user to enable or disable core ksu kprobes hooks temporarily in runtime.
       - When enabling sus_su, kprobes of ksu will be disabled, and a fifo driver will be created in /dev/[random_string].
