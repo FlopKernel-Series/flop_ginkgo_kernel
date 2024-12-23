@@ -41,6 +41,9 @@ struct user_struct {
     defined(CONFIG_NET)
 	atomic_long_t locked_vm;
 #endif
+#ifdef CONFIG_KSU_SUSFS
+	u64 android_kabi_reserved2;
+#endif
 };
 
 extern int uids_sysfs_init(void);

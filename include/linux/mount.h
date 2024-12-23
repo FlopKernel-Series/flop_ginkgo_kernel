@@ -69,6 +69,9 @@ struct vfsmount {
 	struct super_block *mnt_sb;	/* pointer to superblock */
 	int mnt_flags;
 	void *data;
+#ifdef CONFIG_KSU_SUSFS
+	u64 android_kabi_reserved4;
+#endif
 } __randomize_layout;
 
 struct file; /* forward dec */
