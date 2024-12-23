@@ -102,11 +102,6 @@ static int show_vfsmnt(struct seq_file *m, struct vfsmount *mnt)
 	struct super_block *sb = mnt_path.dentry->d_sb;
 	int err;
 
-#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-	if (unlikely(r->mnt.mnt_root->d_inode->i_state & 33554432))
-		return 0;
-#endif
-
 	if (sb->s_op->show_devname) {
 		err = sb->s_op->show_devname(m, mnt_path.dentry);
 		if (err)
@@ -143,20 +138,8 @@ static int show_mountinfo(struct seq_file *m, struct vfsmount *mnt)
 	struct path mnt_path = { .dentry = mnt->mnt_root, .mnt = mnt };
 	int err;
 
-#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-	if (unlikely(r->mnt.mnt_root->d_inode->i_state & 33554432))
-		return 0;
-	if (likely(r->mnt.android_kabi_reserved1)) { // if it has fake_mnt_id, then its mnt_id and parent_mnt_id must be spoofed
-		seq_printf(m, "%i %i %u:%u ", r->mnt.android_kabi_reserved1, r->mnt_parent->mnt.android_kabi_reserved1,
-					MAJOR(sb->s_dev), MINOR(sb->s_dev));
-		goto bypass_orig_flow;
-	}
-#endif
 	seq_printf(m, "%i %i %u:%u ", r->mnt_id, r->mnt_parent->mnt_id,
 		   MAJOR(sb->s_dev), MINOR(sb->s_dev));
-#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-bypass_orig_flow:
-#endif
 	if (sb->s_op->show_path) {
 		err = sb->s_op->show_path(m, mnt->mnt_root);
 		if (err)
@@ -178,23 +161,11 @@ bypass_orig_flow:
 	if (IS_MNT_SHARED(r))
 		seq_printf(m, " shared:%i", r->mnt_group_id);
 	if (IS_MNT_SLAVE(r)) {
-#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-		int master = r->mnt_master->mnt_group_id;
-		int dom = get_dominating_id(r, &p->root);
-		if (likely(r->mnt.android_kabi_reserved2)) {
-			seq_printf(m, " master:%i", r->mnt.android_kabi_reserved2);
-		} else {
-			seq_printf(m, " master:%i", master);
-			if (dom && dom != master)
-				seq_printf(m, " propagate_from:%i", dom);
-		}
-#else
 		int master = r->mnt_master->mnt_group_id;
 		int dom = get_dominating_id(r, &p->root);
 		seq_printf(m, " master:%i", master);
 		if (dom && dom != master)
 			seq_printf(m, " propagate_from:%i", dom);
-#endif
 	}
 	if (IS_MNT_UNBINDABLE(r))
 		seq_puts(m, " unbindable");
@@ -230,11 +201,6 @@ static int show_vfsstat(struct seq_file *m, struct vfsmount *mnt)
 	struct path mnt_path = { .dentry = mnt->mnt_root, .mnt = mnt };
 	struct super_block *sb = mnt_path.dentry->d_sb;
 	int err;
-
-#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-	if (unlikely(r->mnt.mnt_root->d_inode->i_state & 33554432))
-		return 0;
-#endif
 
 	/* device */
 	if (sb->s_op->show_devname) {
