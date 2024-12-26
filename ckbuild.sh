@@ -59,7 +59,7 @@ OUT_DTBO="out/arch/arm64/boot/dtbo.img"
 ## Customizable vars
 
 # Carakernel version
-CK_VER="MS23"
+CK_VER="MS24"
 
 # Toggles
 USE_CCACHE="1"
