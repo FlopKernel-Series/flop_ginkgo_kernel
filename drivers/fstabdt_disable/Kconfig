@@ -1,0 +1,4 @@
+menuconfig FSTABDT_DISABLE
+	bool "Driver to Disable Fstab Entry in Device Tree"
+	help
+	  This driver modifies the device tree to disable the fstab entry.
