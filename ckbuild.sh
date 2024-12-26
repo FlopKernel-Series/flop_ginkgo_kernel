@@ -13,6 +13,7 @@ SD_REPO="https://github.com/ThankYouMario/proprietary_vendor_qcom_sdclang"
 SD_BRANCH="14"
 PC_REPO="https://github.com/kdrag0n/proton-clang"
 LZ_REPO="https://gitlab.com/Jprimero15/lolz_clang.git"
+RC_URL="https://github.com/kutemeikito/RastaMod69-Clang/releases/download/RastaMod69-Clang-20.0.0-release/RastaMod69-Clang-20.0.0.tar.gz"
 # AnyKernel3
 AK3_URL="https://github.com/Flopster101/AnyKernel3"
 AK3_BRANCH="carakernel-new"
@@ -48,6 +49,7 @@ DATE="$(date '+%Y%m%d-%H%M')"
 SD_DIR="$WP/sdclang"
 AC_DIR="$WP/aospclang"
 PC_DIR="$WP/protonclang"
+RC_DIR="$WP/rm69clang"
 LZ_DIR="$WP/lolzclang"
 GCC_DIR="$WP/gcc"
 GCC64_DIR="$WP/gcc64"
@@ -119,7 +121,7 @@ TEST_CHANNEL=1
 # Upload build log
 LOG_UPLOAD=1
 
-# Pick aosp, proton, sdclang or lolz
+# Pick aosp, proton, rm69, sdclang or lolz
 CLANG_TYPE=aosp
 
 ## Info message
@@ -212,6 +214,34 @@ get_toolchain() {
         fi
     fi
 
+    # RastaMod69 Clang
+    if [[ $1 = "rm69" ]]; then
+        if ! [ -d "$RC_DIR" ]; then
+            echo -e "\nINFO: RastaMod69 Clang not found! Cloning to $RC_DIR..."
+            
+            # Download and extract RastaMod69 Clang
+            wget -q --show-progress $RC_URL -O "$WP/RastaMod69-clang.tar.gz"
+            if [ $? -ne 0 ]; then
+                echo -e "\nERROR: Download failed! Aborting..."
+                rm -f "$WP/RastaMod69-clang.tar.gz"
+                exit 1
+            fi
+            
+            rm -rf clang && mkdir -p "$RC_DIR" && tar -xf "$WP/RastaMod69-clang.tar.gz" -C "$RC_DIR"
+            if [ $? -ne 0 ]; then
+                echo -e "\nERROR: Extraction failed! Aborting..."
+                rm -f "$WP/RastaMod69-clang.tar.gz"
+                exit 1
+            fi
+            
+            # Clean up the temporary file
+            rm -f "$WP/RastaMod69-clang.tar.gz"
+            
+            echo -e "\nINFO: RastaMod69 Clang successfully cloned to $RC_DIR"
+        fi
+    fi
+
+
     # Lolz Clang
     if [[ $1 = "lolz" ]]; then
         if ! [ -d "$LZ_DIR" ]; then
@@ -259,6 +289,11 @@ prep_toolchain() {
         CCARM64_PREFIX=aarch64-linux-gnu-
         CCARM_PREFIX=arm-linux-gnueabi-
         echo -e "\nINFO: Using Proton Clang..."
+    elif [[ $1 = "rm69" ]]; then
+        CLANG_DIR="$RC_DIR"
+        CCARM64_PREFIX=aarch64-linux-gnu-
+        CCARM_PREFIX=arm-linux-gnueabi-
+        echo -e "\nINFO: Using RastaMod69 Clang..."
     elif [[ $1 = "lolz" ]]; then
         CLANG_DIR="$LZ_DIR"
         CCARM64_PREFIX=aarch64-linux-gnu-
@@ -269,7 +304,7 @@ prep_toolchain() {
     ## Set PATH according to toolchain
     if [[ $1 = "sdclang" ]] || [[ $1 = "aosp" ]] ; then
         export PATH="${CLANG_DIR}/bin:${GCC64_DIR}/bin:${GCC_DIR}/bin:/usr/bin:${PATH}"
-    elif [[ $1 = "proton" ]] || [[ $1 = "lolz" ]] ; then
+    else
         export PATH="${CLANG_DIR}/bin:${PATH}"
     fi
 
