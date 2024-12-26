@@ -69,7 +69,6 @@ DO_KSU=0
 DO_CLEAN=0
 DO_MENUCONFIG=0
 IS_RELEASE=0
-IS_DP=0
 DO_TG=0
 for arg in "$@"
 do
@@ -96,10 +95,6 @@ do
     if [[ "$arg" == *o* ]]; then
         echo -e "\nINFO: oshi.at argument passed, build will be uploaded to oshi.at"
         DO_OSHI=1
-    fi
-    if [[ "$arg" == *d* ]]; then
-        echo -e "\nINFO: Dynamic partition argument passed, build is marked as DP"
-        IS_DP=1
     fi
 done
 
@@ -150,20 +145,15 @@ else
 fi
 
 CK_TYPE=""
-if [ $IS_DP -eq 1 ] && [ $DO_KSU -eq 1 ]; then
-    CK_TYPE="DP+KSU"
-elif [ $IS_DP -eq 1 ]; then
-    CK_TYPE="DP"
-elif [ $DO_KSU -eq 1 ]; then
-    CK_TYPE="LEGACY+KSU"
+if [ $DO_KSU -eq 1 ]; then
+    CK_TYPE="KSU"
 else
-    CK_TYPE="LEGACY"
+    CK_TYPE="Vanilla"
 fi
 ZIP_PATH="$WP/Carakernel_$CK_VER-$CK_TYPE-ginkgo-$DATE.zip"
 
 echo -e "\nINFO: Build info:
-- KernelSU= $( [ "$DO_KSU" -eq 1 ] && echo Yes || echo No )
-- Dynamic partitions=$IS_DP
+- KernelSU: $( [ "$DO_KSU" -eq 1 ] && echo Yes || echo No )
 - Carakernel version: $CK_VER
 - Linux version: $LINUX_VER
 - Defconfig: $DEFCONFIG
