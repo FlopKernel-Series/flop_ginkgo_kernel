@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Build script for Carakernel.
+# Build script for FloppyKernel.
 # Based on build script for Quicksilver, by Ghostrider.
 # Copyright (C) 2020-2021 Adithya R. (original version)
 # Copyright (C) 2022-2024 Flopster101 (rewrite)
@@ -60,7 +60,7 @@ OUT_DTBO="out/arch/arm64/boot/dtbo.img"
 
 ## Customizable vars
 
-# Carakernel version
+# FloppyKernel version
 CK_VER="MS24"
 
 # Toggles
@@ -152,11 +152,11 @@ if [ $DO_KSU -eq 1 ]; then
 else
     CK_TYPE="Vanilla"
 fi
-ZIP_PATH="$WP/Carakernel_$CK_VER-$CK_TYPE-ginkgo-$DATE.zip"
+ZIP_PATH="$WP/FloppyKernel_$CK_VER-$CK_TYPE-ginkgo-$DATE.zip"
 
 echo -e "\nINFO: Build info:
 - KernelSU: $( [ "$DO_KSU" -eq 1 ] && echo Yes || echo No )
-- Carakernel version: $CK_VER
+- FloppyKernel version: $CK_VER
 - Linux version: $LINUX_VER
 - Defconfig: $DEFCONFIG
 - Build date: $DATE
@@ -473,7 +473,7 @@ upload() {
         curl -T log.txt oshi.at
     fi
     # Delete any leftover zip files
-    # rm -f $WP/Carakernel*zip
+    # rm -f $WP/FloppyKernel*zip
 }
 
 clean() {
