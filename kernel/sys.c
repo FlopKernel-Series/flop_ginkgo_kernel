@@ -1191,6 +1191,12 @@ static uint64_t netbpfload_pid = 0;
 SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 {
 	struct new_utsname tmp;
+	bool bpf_spoof = true; // Spoof by default
+
+	// Parse the kernel command line for "skip_bpfspoof"
+	if (strstr(saved_command_line, "skip_bpfspoof")) {
+		bpf_spoof = false;
+	}
 
 	down_read(&uts_sem);
 
@@ -1199,7 +1205,7 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 		goto bypass_orig_flow;
 #endif
 	memcpy(&tmp, utsname(), sizeof(tmp));
-	if (!strncmp(current->comm, "netbpfload", 10) &&
+	if (bpf_spoof && !strncmp(current->comm, "netbpfload", 10) &&
 	    current->pid != netbpfload_pid) {
 		netbpfload_pid = current->pid;
 		strcpy(tmp.release, "6.6.40");
