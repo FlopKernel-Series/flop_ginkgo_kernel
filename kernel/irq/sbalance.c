@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (C) 2023-2024 Sultan Alsawaf <sultan@kerneltoast.com>.
+ * Copyright (C) 2023 Sultan Alsawaf <sultan@kerneltoast.com>.
  */
 
 /**
@@ -51,15 +51,14 @@ struct bal_irq {
 	struct list_head move_node;
 	struct rcu_head rcu;
 	struct irq_desc *desc;
-	unsigned long delta_nr;
-	unsigned long old_nr;
+	unsigned int delta_nr;
+	unsigned int old_nr;
 	int prev_cpu;
 };
 
 struct bal_domain {
 	struct list_head movable_irqs;
-	unsigned long intrs;
-	unsigned long old_total;
+	unsigned int intrs;
 	int cpu;
 };
 
@@ -112,13 +111,10 @@ static bool update_irq_data(struct bal_irq *bi, int *cpu)
 	struct irq_desc *desc = bi->desc;
 	unsigned int nr;
 
-	/*
-	 * Get the CPU which currently has this IRQ affined. Due to hardware and
-	 * irqchip driver quirks, a previously set affinity may not match the
-	 * actual affinity of the IRQ. Therefore, we check the last CPU that the
-	 * IRQ fired upon in order to determine its actual affinity.
-	 */
-	*cpu = READ_ONCE(desc->last_cpu);
+	/* Find the CPU which currently has this IRQ affined */
+	raw_spin_lock_irq(&desc->lock);
+	*cpu = cpumask_first(desc->irq_common_data.affinity);
+	raw_spin_unlock_irq(&desc->lock);
 	if (*cpu >= nr_cpu_ids)
 		return false;
 
@@ -189,20 +185,12 @@ static bool find_min_bd(const cpumask_t *mask, unsigned int max_intrs,
 		if (intrs > max_intrs)
 			return true;
 
-		/* Don't consider moving IRQs to this CPU if it's excluded */
-		if (cpumask_test_cpu(cpu, &cpu_exclude_mask))
-			continue;
-
 		/* Find the CPU with the lowest relative number of interrupts */
 		if (intrs < min_intrs) {
 			min_intrs = intrs;
 			*min_bd = bd;
 		}
 	}
-
-	/* No CPUs available to move IRQs onto */
-	if (min_intrs == UINT_MAX)
-		return true;
 
 	/* Don't balance if IRQs are already balanced evenly enough */
 	return max_intrs - min_intrs < IRQ_SCALED_THRESH;
@@ -220,36 +208,34 @@ static void balance_irqs(void)
 	rcu_read_lock();
 
 	/* Find the available CPUs for balancing, if there are any */
-	cpumask_copy(&cpus, cpu_active_mask);
+	cpumask_andnot(&cpus, cpu_active_mask, &cpu_exclude_mask);
 	if (unlikely(cpumask_weight(&cpus) <= 1))
 		goto unlock;
 
-	for_each_cpu(cpu, &cpus) {
-		/*
-		 * Get the current capacity for each CPU. This is adjusted for
-		 * time spent processing IRQs, RT-task time, and thermal
-		 * pressure. We don't exclude time spent processing IRQs when
-		 * balancing because balancing is only done using interrupt
-		 * counts rather than time spent in interrupts. That way, time
-		 * spent processing each interrupt is considered when balancing.
-		 */
+	/*
+	 * Get the current capacity for each CPU. This is adjusted for time
+	 * spent processing IRQs, RT-task time, and thermal pressure. We don't
+	 * exclude time spent processing IRQs when balancing because balancing
+	 * is only done using interrupt counts rather than time spent in
+	 * interrupts. That way, time spent processing each interrupt is
+	 * considered when balancing.
+	 */
+	for_each_cpu(cpu, &cpus)
 		per_cpu(cpu_cap, cpu) = cpu_rq(cpu)->cpu_capacity;
 
-		/* Get the number of new interrupts on this CPU */
-		bd = per_cpu_ptr(&balance_data, cpu);
-		bd->intrs = kstat_cpu_irqs_sum(cpu) - bd->old_total;
-		bd->old_total += bd->intrs;
-	}
-
 	list_for_each_entry_rcu(bi, &bal_irq_list, node) {
+		if (!update_irq_data(bi, &cpu))
+			continue;
+
+		/* Add the number of new interrupts to this CPU's count */
+		bd = per_cpu_ptr(&balance_data, cpu);
+		bd->intrs += bi->delta_nr;
+
 		/* Consider this IRQ for balancing if it's movable */
 		if (!__irq_can_set_affinity(bi->desc))
 			continue;
 
-		if (!update_irq_data(bi, &cpu))
-			continue;
-
-		/* Ignore for this run if the IRQ isn't on the expected CPU */
+		/* Ignore for this balancing run if something else moved it */
 		if (cpu != bi->prev_cpu) {
 			bi->prev_cpu = cpu;
 			continue;
@@ -287,7 +273,7 @@ try_next_heaviest:
 		if (cpumask_weight(&cpus) == 2)
 			goto unlock;
 
-		__cpumask_clear_cpu(max_bd->cpu, &cpus);
+		cpumask_clear_cpu(max_bd->cpu, &cpus);
 	}
 
 	/* Find the CPU with the lowest relative interrupt count */
@@ -311,14 +297,9 @@ try_next_heaviest:
 		/* Keep track of whether or not any IRQs are moved */
 		moved_irq = true;
 
-		/*
-		 * Update the counts and recalculate the max scaled count. The
-		 * balance domain's delta interrupt count could be lower than
-		 * the sum of new interrupts counted for each IRQ, since they're
-		 * measured using different counters.
-		 */
+		/* Update the counts and recalculate the max scaled count */
 		min_bd->intrs += bi->delta_nr;
-		max_bd->intrs -= min(bi->delta_nr, max_bd->intrs);
+		max_bd->intrs -= bi->delta_nr;
 		max_intrs = scale_intrs(max_bd->intrs, max_bd->cpu);
 
 		/* Recheck for the least-heavy CPU since it may have changed */
@@ -343,38 +324,6 @@ unlock:
 	}
 }
 
-struct process_timer {
-	struct timer_list timer;
-	struct task_struct *task;
-};
-
-static void process_timeout(struct timer_list *t)
-{
-	struct process_timer *timeout = from_timer(timeout, t, timer);
-
-	wake_up_process(timeout->task);
-}
-
-static void sbalance_wait(long poll_jiffies)
-{
-	struct process_timer timer;
-
-	/*
-	 * Open code freezable_schedule_timeout_interruptible() in order to
-	 * make the timer deferrable, so that it doesn't kick CPUs out of idle.
-	 */
-	freezer_do_not_count();
-	__set_current_state(TASK_IDLE);
-	timer.task = current;
-	timer_setup_on_stack(&timer.timer, process_timeout, TIMER_DEFERRABLE);
-	timer.timer.expires = jiffies + poll_jiffies;
-	add_timer(&timer.timer);
-	schedule();
-	del_singleshot_timer_sync(&timer.timer);
-	destroy_timer_on_stack(&timer.timer);
-	freezer_count();
-}
-
 static int __noreturn sbalance_thread(void *data)
 {
 	long poll_jiffies = msecs_to_jiffies(POLL_MS);
@@ -394,7 +343,7 @@ static int __noreturn sbalance_thread(void *data)
 
 	set_freezable();
 	while (1) {
-		sbalance_wait(poll_jiffies);
+		freezable_schedule_timeout_interruptible(poll_jiffies);
 		balance_irqs();
 	}
 }

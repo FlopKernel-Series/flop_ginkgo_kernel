@@ -2429,9 +2429,7 @@ cppflags-$(CONFIG_FEATURE_PKTLOG) +=     -DFEATURE_PKTLOG
 
 ifeq ($(CONFIG_WLAN_NAPI), y)
 cppflags-y += -DFEATURE_NAPI
-ifneq ($(CONFIG_IRQ_SBALANCE), y)
 cppflags-y += -DHIF_IRQ_AFFINITY
-endif
 ifeq ($(CONFIG_WLAN_NAPI_DEBUG), y)
 cppflags-y += -DFEATURE_NAPI_DEBUG
 endif
