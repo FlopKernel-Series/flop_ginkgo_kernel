@@ -26,7 +26,7 @@
 #define CMD_SUSFS_ADD_TRY_UMOUNT 0x55580
 #define CMD_SUSFS_SET_UNAME 0x55590
 #define CMD_SUSFS_ENABLE_LOG 0x555a0
-#define CMD_SUSFS_SET_PROC_CMDLINE 0x555b0
+#define CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG 0x555b0
 #define CMD_SUSFS_ADD_OPEN_REDIRECT 0x555c0
 #define CMD_SUSFS_RUN_UMOUNT_FOR_CURRENT_MNT_NS 0x555d0
 #define CMD_SUSFS_SHOW_VERSION 0x555e1
@@ -37,7 +37,7 @@
 #define CMD_SUSFS_SUS_SU 0x60000
 
 #define SUSFS_MAX_LEN_PATHNAME 256 // 256 should address many paths already unless you are doing some strange experimental stuff, then set your own desired length
-#define SUSFS_FAKE_PROC_CMDLINE_SIZE 4096
+#define SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE 4096
 
 #define TRY_UMOUNT_DEFAULT 0
 #define TRY_UMOUNT_DETACH 1
@@ -204,16 +204,16 @@ void susfs_auto_add_try_umount_for_bind_mount(struct path *path);
 /* spoof_uname */
 #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
 int susfs_set_uname(struct st_susfs_uname* __user user_info);
-int susfs_spoof_uname(struct new_utsname* tmp);
+void susfs_spoof_uname(struct new_utsname* tmp);
 #endif
 /* set_log */
 #ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
 void susfs_set_log(bool enabled);
 #endif
-/* spoof_proc_cmdline */
-#ifdef CONFIG_KSU_SUSFS_SPOOF_PROC_CMDLINE
-int susfs_set_proc_cmdline(char* __user user_fake_proc_cmdline);
-int susfs_spoof_proc_cmdline(struct seq_file *m);
+/* spoof_cmdline_or_bootconfig */
+#ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+int susfs_set_cmdline_or_bootconfig(char* __user user_fake_boot_config);
+int susfs_spoof_cmdline_or_bootconfig(struct seq_file *m);
 #endif
 /* open_redirect */
 #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
