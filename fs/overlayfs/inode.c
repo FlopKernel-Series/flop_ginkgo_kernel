@@ -77,7 +77,6 @@ int ovl_getattr(const struct path *path, struct kstat *stat,
 		goto out;
 	}
 #endif
-
 	type = ovl_path_real(dentry, &realpath);
 	old_cred = ovl_override_creds(dentry->d_sb);
 	err = vfs_getattr(&realpath, stat, request_mask, flags);

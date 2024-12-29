@@ -1183,9 +1183,8 @@ static int override_release(char __user *release, size_t len)
 }
 
 #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
-extern int susfs_spoof_uname(struct new_utsname* tmp);
+extern void susfs_spoof_uname(struct new_utsname* tmp);
 #endif
-
 
 static uint64_t netbpfload_pid = 0;
 SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
@@ -1199,11 +1198,6 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 	}
 
 	down_read(&uts_sem);
-
-#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
-	if (likely(!susfs_spoof_uname(&tmp)))
-		goto bypass_orig_flow;
-#endif
 	memcpy(&tmp, utsname(), sizeof(tmp));
 	if (bpf_spoof && !strncmp(current->comm, "netbpfload", 10) &&
 	    current->pid != netbpfload_pid) {
@@ -1213,7 +1207,7 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 			 current->comm, current->pid, tmp.release);
 	}
 #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
-bypass_orig_flow:
+	susfs_spoof_uname(&tmp);
 #endif
 	up_read(&uts_sem);
 	if (copy_to_user(name, &tmp, sizeof(tmp)))
