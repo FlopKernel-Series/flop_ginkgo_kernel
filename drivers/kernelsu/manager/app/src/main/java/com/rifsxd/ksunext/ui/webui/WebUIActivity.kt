@@ -39,9 +39,9 @@ class WebUIActivity : ComponentActivity() {
         val name = intent.getStringExtra("name")!!
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             @Suppress("DEPRECATION")
-            setTaskDescription(ActivityManager.TaskDescription("KernelSU - $name"))
+            setTaskDescription(ActivityManager.TaskDescription("KernelSU-Next - $name"))
         } else {
-            val taskDescription = ActivityManager.TaskDescription.Builder().setLabel("KernelSU - $name").build()
+            val taskDescription = ActivityManager.TaskDescription.Builder().setLabel("KernelSU-Next - $name").build()
             setTaskDescription(taskDescription)
         }
 
@@ -52,7 +52,7 @@ class WebUIActivity : ComponentActivity() {
         val webRoot = File("${moduleDir}/webroot")
         val rootShell = createRootShell(true).also { this.rootShell = it }
         val webViewAssetLoader = WebViewAssetLoader.Builder()
-            .setDomain("mui.kernelsu.org")
+            .setDomain("mui.kernelsu-next.org")
             .addPathHandler(
                 "/",
                 SuFilePathHandler(this, webRoot, rootShell)
@@ -85,7 +85,7 @@ class WebUIActivity : ComponentActivity() {
             webviewInterface = WebViewInterface(this@WebUIActivity, this, moduleDir)
             addJavascriptInterface(webviewInterface, "ksu")
             setWebViewClient(webViewClient)
-            loadUrl("https://mui.kernelsu.org/index.html")
+            loadUrl("https://mui.kernelsu-next.org/index.html")
         }
 
         setContentView(webView)

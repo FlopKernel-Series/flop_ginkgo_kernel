@@ -19,17 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
-import androidx.compose.material.icons.filled.BugReport
-import androidx.compose.material.icons.filled.Compress
-import androidx.compose.material.icons.filled.ContactPage
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DeleteForever
-import androidx.compose.material.icons.filled.DeveloperMode
-import androidx.compose.material.icons.filled.Fence
-import androidx.compose.material.icons.filled.RemoveModerator
-import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Update
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -44,6 +34,7 @@ import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -87,6 +78,7 @@ import com.rifsxd.ksunext.ui.component.rememberCustomDialog
 import com.rifsxd.ksunext.ui.component.rememberLoadingDialog
 import com.rifsxd.ksunext.ui.util.LocalSnackbarHost
 import com.rifsxd.ksunext.ui.util.getBugreportFile
+import com.rifsxd.ksunext.ui.util.*
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
@@ -114,6 +106,7 @@ fun SettingScreen(navigator: DestinationsNavigator) {
             AboutDialog(it)
         }
         val loadingDialog = rememberLoadingDialog()
+        val shrinkDialog = rememberConfirmDialog()
 
         Column(
             modifier = Modifier
@@ -166,6 +159,33 @@ fun SettingScreen(navigator: DestinationsNavigator) {
             }
 
             val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+
+            val isSUS_SU = getSuSFSFeatures()
+            if (isSUS_SU == "CONFIG_KSU_SUSFS_SUS_SU") {
+                var isEnabled by rememberSaveable {
+                    mutableStateOf(susfsSUS_SU_Mode() == "2")
+                }
+
+                LaunchedEffect(Unit) {
+                    isEnabled = susfsSUS_SU_Mode() == "2"
+                }
+
+                SwitchItem(
+                    icon = Icons.Filled.VisibilityOff,
+                    title = stringResource(id = R.string.settings_susfs_toggle),
+                    summary = stringResource(id = R.string.settings_susfs_toggle_summary),
+                    checked = isEnabled
+                ) {
+                    if (it) {
+                        susfsSUS_SU_2()
+                    } else {
+                        susfsSUS_SU_0()
+                    }
+                    prefs.edit().putBoolean("enable_sus_su", it).apply()
+                    isEnabled = it
+                }
+            }
+
             var checkUpdate by rememberSaveable {
                 mutableStateOf(
                     prefs.getBoolean("check_update", true)
@@ -227,7 +247,7 @@ fun SettingScreen(navigator: DestinationsNavigator) {
                                         .clickable {
                                             val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH_mm")
                                             val current = LocalDateTime.now().format(formatter)
-                                            exportBugreportLauncher.launch("KernelSU_bugreport_${current}.tar.gz")
+                                            exportBugreportLauncher.launch("KernelSU_Next_bugreport_${current}.tar.gz")
                                             showBottomsheet = false
                                         }
                                 ) {
@@ -304,6 +324,28 @@ fun SettingScreen(navigator: DestinationsNavigator) {
                     }
                 )
             }
+
+            val shrink = stringResource(id = R.string.shrink_sparse_image)
+            val shrinkMessage = stringResource(id = R.string.shrink_sparse_image_message)
+            ListItem(
+                leadingContent = {
+                    Icon(
+                        Icons.Filled.Compress,
+                        shrink
+                    )
+                },
+                headlineContent = { Text(shrink) },
+                modifier = Modifier.clickable {
+                    scope.launch {
+                        val result = shrinkDialog.awaitConfirm(title = shrink, content = shrinkMessage)
+                        if (result == ConfirmResult.Confirmed) {
+                            loadingDialog.withLoading {
+                                shrinkModules()
+                            }
+                        }
+                    }
+                }
+            )
 
             val lkmMode = Natives.version >= Natives.MINIMAL_SUPPORTED_KERNEL_LKM && Natives.isLkmMode
             if (lkmMode) {

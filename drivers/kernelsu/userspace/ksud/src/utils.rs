@@ -1,20 +1,26 @@
 use anyhow::{bail, Context, Error, Ok, Result};
 use std::{
-    fs::{create_dir_all, remove_file, write, File, OpenOptions},
+    fs::{self, create_dir_all, remove_file, write, File, OpenOptions},
     io::{
         ErrorKind::{AlreadyExists, NotFound},
         Write,
     },
     path::Path,
     process::Command,
+    sync::OnceLock,
 };
 
 use crate::{assets, boot_patch, defs, ksucalls, module, restorecon};
+use std::fs::metadata;
 #[allow(unused_imports)]
 use std::fs::{set_permissions, Permissions};
 #[cfg(unix)]
 use std::os::unix::prelude::PermissionsExt;
 
+use hole_punch::*;
+use std::io::{Read, Seek, SeekFrom};
+
+use jwalk::WalkDir;
 use std::path::PathBuf;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -35,7 +41,7 @@ pub fn ensure_clean_dir(dir: impl AsRef<Path>) -> Result<()> {
 
 pub fn ensure_file_exists<T: AsRef<Path>>(file: T) -> Result<()> {
     match File::options().write(true).create_new(true).open(&file) {
-        Result::Ok(_) => Ok(()),
+        std::result::Result::Ok(_) => Ok(()),
         Err(err) => {
             if err.kind() == AlreadyExists && file.as_ref().is_file() {
                 Ok(())
@@ -183,6 +189,68 @@ pub fn has_magisk() -> bool {
     which::which("magisk").is_ok()
 }
 
+fn is_ok_empty(dir: &str) -> bool {
+    use std::result::Result::Ok;
+
+    match fs::read_dir(dir) {
+        Ok(mut entries) => entries.next().is_none(),
+        Err(_) => false,
+    }
+}
+
+fn find_temp_path() -> String {
+    use std::result::Result::Ok;
+
+    if is_ok_empty(defs::TEMP_DIR) {
+        return defs::TEMP_DIR.to_string();
+    }
+
+    // Try to create a random directory in /dev/
+    let r = tempfile::tempdir_in("/dev/");
+    match r {
+        Ok(tmp_dir) => {
+            if let Some(path) = tmp_dir.into_path().to_str() {
+                return path.to_string();
+            }
+        }
+        Err(_e) => {}
+    }
+
+    let dirs = [
+        defs::TEMP_DIR,
+        "/patch_hw",
+        "/oem",
+        "/root",
+        defs::TEMP_DIR_LEGACY,
+    ];
+
+    // find empty directory
+    for dir in dirs {
+        if is_ok_empty(dir) {
+            return dir.to_string();
+        }
+    }
+
+    // Fallback to non-empty directory
+    for dir in dirs {
+        if metadata(dir).is_ok() {
+            return dir.to_string();
+        }
+    }
+
+    "".to_string()
+}
+
+pub fn get_tmp_path() -> &'static str {
+    static CHOSEN_TMP_PATH: OnceLock<String> = OnceLock::new();
+
+    CHOSEN_TMP_PATH.get_or_init(|| {
+        let r = find_temp_path();
+        log::info!("Chosen temp_path: {}", r);
+        r
+    })
+}
+
 #[cfg(target_os = "android")]
 fn link_ksud_to_bin() -> Result<()> {
     let ksu_bin = PathBuf::from(defs::DAEMON_PATH);
@@ -220,15 +288,167 @@ pub fn uninstall(magiskboot_path: Option<PathBuf>) -> Result<()> {
     println!("- Removing directories..");
     std::fs::remove_dir_all(defs::WORKING_DIR).ok();
     std::fs::remove_file(defs::DAEMON_PATH).ok();
+    crate::mount::umount_dir(defs::MODULE_DIR).ok();
     std::fs::remove_dir_all(defs::MODULE_DIR).ok();
+    std::fs::remove_dir_all(defs::MODULE_UPDATE_TMP_DIR).ok();
     println!("- Restore boot image..");
     boot_patch::restore(None, magiskboot_path, true)?;
-    println!("- Uninstall KernelSU manager..");
+    println!("- Uninstall KernelSU-Next manager..");
     Command::new("pm")
-        .args(["uninstall", "me.weishu.kernelsu"])
+        .args(["uninstall", "com.rifsxd.ksunext"])
         .spawn()?;
     println!("- Rebooting in 5 seconds..");
     std::thread::sleep(std::time::Duration::from_secs(5));
     Command::new("reboot").spawn()?;
     Ok(())
+}
+
+// TODO: use libxcp to improve the speed if cross's MSRV is 1.70
+pub fn copy_sparse_file<P: AsRef<Path>, Q: AsRef<Path>>(
+    src: P,
+    dst: Q,
+    punch_hole: bool,
+) -> Result<()> {
+    let mut src_file = File::open(src.as_ref())?;
+    let mut dst_file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(dst.as_ref())?;
+
+    dst_file.set_len(src_file.metadata()?.len())?;
+
+    let segments = src_file.scan_chunks()?;
+    for segment in segments {
+        if let SegmentType::Data = segment.segment_type {
+            let start = segment.start;
+            let end = segment.end;
+
+            src_file.seek(SeekFrom::Start(start))?;
+            dst_file.seek(SeekFrom::Start(start))?;
+
+            let mut buffer = [0; 4096];
+            let mut total_bytes_copied = 0;
+
+            while total_bytes_copied < end - start {
+                let bytes_to_read =
+                    std::cmp::min(buffer.len() as u64, end - start - total_bytes_copied);
+                let bytes_read = src_file.read(&mut buffer[..bytes_to_read as usize])?;
+
+                if bytes_read == 0 {
+                    break;
+                }
+
+                if punch_hole && buffer[..bytes_read].iter().all(|&x| x == 0) {
+                    // all zero, don't copy it at all!
+                    dst_file.seek(SeekFrom::Current(bytes_read as i64))?;
+                    total_bytes_copied += bytes_read as u64;
+                    continue;
+                }
+                dst_file.write_all(&buffer[..bytes_read])?;
+                total_bytes_copied += bytes_read as u64;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn copy_xattrs(src_path: impl AsRef<Path>, dest_path: impl AsRef<Path>) -> Result<()> {
+    use rustix::path::Arg;
+    let std::result::Result::Ok(xattrs) = extattr::llistxattr(src_path.as_ref()) else {
+        return Ok(());
+    };
+    for xattr in xattrs {
+        let std::result::Result::Ok(value) = extattr::lgetxattr(src_path.as_ref(), &xattr) else {
+            continue;
+        };
+        log::info!(
+            "Set {:?} xattr {} = {}",
+            dest_path.as_ref(),
+            xattr.to_string_lossy(),
+            value.to_string_lossy(),
+        );
+        if let Err(e) =
+            extattr::lsetxattr(dest_path.as_ref(), &xattr, &value, extattr::Flags::empty())
+        {
+            log::warn!("Failed to set xattr: {}", e);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn copy_module_files(source: impl AsRef<Path>, destination: impl AsRef<Path>) -> Result<()> {
+    use rustix::fs::FileTypeExt;
+    use rustix::fs::MetadataExt;
+
+    for entry in WalkDir::new(source.as_ref()).into_iter() {
+        let entry = entry.context("Failed to access entry")?;
+        let source_path = entry.path();
+        let relative_path = source_path
+            .strip_prefix(source.as_ref())
+            .context("Failed to generate relative path")?;
+        let dest_path = destination.as_ref().join(relative_path);
+
+        if let Some(parent) = dest_path.parent() {
+            std::fs::create_dir_all(parent).context("Failed to create directory")?;
+        }
+
+        if entry.file_type().is_file() {
+            std::fs::copy(&source_path, &dest_path).with_context(|| {
+                format!("Failed to copy file from {source_path:?} to {dest_path:?}",)
+            })?;
+            copy_xattrs(&source_path, &dest_path)?;
+        } else if entry.file_type().is_symlink() {
+            if dest_path.exists() {
+                std::fs::remove_file(&dest_path).context("Failed to remove file")?;
+            }
+            let target = std::fs::read_link(entry.path()).context("Failed to read symlink")?;
+            log::info!("Symlink: {:?} -> {:?}", dest_path, target);
+            std::os::unix::fs::symlink(target, &dest_path).context("Failed to create symlink")?;
+            copy_xattrs(&source_path, &dest_path)?;
+        } else if entry.file_type().is_dir() {
+            create_dir_all(&dest_path)?;
+            let metadata = std::fs::metadata(&source_path).context("Failed to read metadata")?;
+            std::fs::set_permissions(&dest_path, metadata.permissions())
+                .with_context(|| format!("Failed to set permissions for {dest_path:?}"))?;
+            copy_xattrs(&source_path, &dest_path)?;
+        } else if entry.file_type().is_char_device() {
+            if dest_path.exists() {
+                std::fs::remove_file(&dest_path).context("Failed to remove file")?;
+            }
+            let metadata = std::fs::metadata(&source_path).context("Failed to read metadata")?;
+            let mode = metadata.permissions().mode();
+            let dev = metadata.rdev();
+            if dev == 0 {
+                log::info!(
+                    "Found a char device with major 0: {}",
+                    entry.path().display()
+                );
+                rustix::fs::mknodat(
+                    rustix::fs::CWD,
+                    &dest_path,
+                    rustix::fs::FileType::CharacterDevice,
+                    mode.into(),
+                    dev,
+                )
+                .with_context(|| format!("Failed to create device file at {dest_path:?}"))?;
+                copy_xattrs(&source_path, &dest_path)?;
+            }
+        } else {
+            log::info!(
+                "Unknown file type: {:?}, {:?},",
+                entry.file_type(),
+                entry.path(),
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+pub fn copy_module_files(_source: impl AsRef<Path>, _destination: impl AsRef<Path>) -> Result<()> {
+    unimplemented!()
 }

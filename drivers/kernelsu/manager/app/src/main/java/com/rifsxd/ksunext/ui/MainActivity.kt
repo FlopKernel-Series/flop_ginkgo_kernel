@@ -34,8 +34,11 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.compose.currentBackStackEntryAsState
 import com.ramcosta.composedestinations.DestinationsNavHost
 import com.ramcosta.composedestinations.animations.NavHostAnimatedDestinationStyle
+import com.ramcosta.composedestinations.generated.destinations.ExecuteModuleActionScreenDestination
+import com.ramcosta.composedestinations.generated.destinations.FlashScreenDestination
 import com.ramcosta.composedestinations.generated.NavGraphs
 import com.ramcosta.composedestinations.utils.isRouteOnBackStackAsState
 import com.ramcosta.composedestinations.utils.rememberDestinationsNavigator
@@ -45,6 +48,8 @@ import com.rifsxd.ksunext.ui.screen.BottomBarDestination
 import com.rifsxd.ksunext.ui.theme.KernelSUTheme
 import com.rifsxd.ksunext.ui.util.LocalSnackbarHost
 import com.rifsxd.ksunext.ui.util.rootAvailable
+import com.rifsxd.ksunext.ui.util.install
+import com.rifsxd.ksunext.ui.util.*
 
 class MainActivity : ComponentActivity() {
 
@@ -58,12 +63,38 @@ class MainActivity : ComponentActivity() {
 
         super.onCreate(savedInstanceState)
 
+        val isManager = Natives.becomeManager(ksuApp.packageName)
+	    if (isManager) install()
+
+        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
+
+        val isSUS_SU = getSuSFSFeatures()
+        if (isSUS_SU == "CONFIG_KSU_SUSFS_SUS_SU") {
+            if (prefs.getBoolean("enable_sus_su", false)) {
+                if (susfsSUS_SU_Mode() != "2") {
+                    susfsSUS_SU_2()
+                }
+            }
+        }
+
         setContent {
             KernelSUTheme {
                 val navController = rememberNavController()
                 val snackBarHostState = remember { SnackbarHostState() }
+                val currentDestination = navController.currentBackStackEntryAsState()?.value?.destination
+
+                val showBottomBar = when (currentDestination?.route) {
+                    FlashScreenDestination.route -> false // Hide for FlashScreenDestination
+                    ExecuteModuleActionScreenDestination.route -> false // Hide for ExecuteModuleActionScreen
+                    else -> true
+                }
+
                 Scaffold(
-                    bottomBar = { BottomBar(navController) },
+                    bottomBar = {
+                        if (showBottomBar) {
+                            BottomBar(navController)
+                        }
+                    },
                     contentWindowInsets = WindowInsets(0, 0, 0, 0)
                 ) { innerPadding ->
                     CompositionLocalProvider(
@@ -123,7 +154,7 @@ private fun BottomBar(navController: NavHostController) {
                     }
                 },
                 label = { Text(stringResource(destination.label)) },
-                alwaysShowLabel = false
+                alwaysShowLabel = true
             )
         }
     }

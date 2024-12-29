@@ -3,7 +3,10 @@ package com.rifsxd.ksunext.ui.screen
 import android.net.Uri
 import android.os.Environment
 import android.os.Parcelable
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,8 +16,8 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -35,6 +38,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
@@ -81,6 +85,7 @@ enum class FlashingStatus {
 fun FlashScreen(navigator: DestinationsNavigator, flashIt: FlashIt) {
 
     var text by rememberSaveable { mutableStateOf("") }
+    var tempText : String
     val logContent = rememberSaveable { StringBuilder() }
     var showFloatAction by rememberSaveable { mutableStateOf(false) }
 
@@ -90,6 +95,10 @@ fun FlashScreen(navigator: DestinationsNavigator, flashIt: FlashIt) {
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior(rememberTopAppBarState())
     var flashing by rememberSaveable {
         mutableStateOf(FlashingStatus.FLASHING)
+    }
+
+    BackHandler(enabled = flashing == FlashingStatus.FLASHING) {
+        // Disable back button if flashing is running
     }
 
     LaunchedEffect(Unit) {
@@ -107,7 +116,12 @@ fun FlashScreen(navigator: DestinationsNavigator, flashIt: FlashIt) {
                 }
                 flashing = if (code == 0) FlashingStatus.SUCCESS else FlashingStatus.FAILED
             }, onStdout = {
-                text += "$it\n"
+                tempText = "$it\n"
+                if (tempText.startsWith("[H[J")) { // clear command
+                    text = tempText.substring(6)
+                } else {
+                    text += tempText
+                }
                 logContent.append(it).append("\n")
             }, onStderr = {
                 logContent.append(it).append("\n")
@@ -119,16 +133,13 @@ fun FlashScreen(navigator: DestinationsNavigator, flashIt: FlashIt) {
         topBar = {
             TopBar(
                 flashing,
-                onBack = {
-                    navigator.popBackStack()
-                },
                 onSave = {
                     scope.launch {
                         val format = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss", Locale.getDefault())
                         val date = format.format(Date())
                         val file = File(
                             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                            "KernelSU_install_log_${date}.log"
+                            "KernelSU_Next_install_log_${date}.log"
                         )
                         file.writeText(logContent.toString())
                         snackBarHost.showSnackbar("Log saved to ${file.absolutePath}")
@@ -136,22 +147,6 @@ fun FlashScreen(navigator: DestinationsNavigator, flashIt: FlashIt) {
                 },
                 scrollBehavior = scrollBehavior
             )
-        },
-        floatingActionButton = {
-            if (showFloatAction) {
-                val reboot = stringResource(id = R.string.reboot)
-                ExtendedFloatingActionButton(
-                    onClick = {
-                        scope.launch {
-                            withContext(Dispatchers.IO) {
-                                reboot()
-                            }
-                        }
-                    },
-                    icon = { Icon(Icons.Filled.Refresh, reboot) },
-                    text = { Text(text = reboot) },
-                )
-            }
         },
         snackbarHost = { SnackbarHost(hostState = snackBarHost) },
         contentWindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
@@ -176,6 +171,44 @@ fun FlashScreen(navigator: DestinationsNavigator, flashIt: FlashIt) {
                 fontFamily = FontFamily.Monospace,
                 lineHeight = MaterialTheme.typography.bodySmall.lineHeight,
             )
+        }
+
+        // Floating Action Buttons
+        Box(modifier = Modifier.fillMaxSize()) {
+            // Reboot button (bottom left)
+            if (showFloatAction) {
+                val reboot = stringResource(id = R.string.reboot)
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                reboot()
+                            }
+                        }
+                    },
+                    icon = { Icon(Icons.Filled.Refresh, reboot) },
+                    text = { Text(text = reboot) },
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(16.dp)
+                        .navigationBarsPadding()
+                )
+            }
+
+            if (showFloatAction) {
+                // Back button (bottom right)
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        navigator.popBackStack()
+                    },
+                    text = { Text(text = stringResource(R.string.close)) },
+                    icon = { Icon(Icons.Filled.Close, contentDescription = null) },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(16.dp)
+                        .navigationBarsPadding()
+                )
+            }
         }
     }
 }
@@ -219,7 +252,6 @@ fun flashIt(
 @Composable
 private fun TopBar(
     status: FlashingStatus,
-    onBack: () -> Unit = {},
     onSave: () -> Unit = {},
     scrollBehavior: TopAppBarScrollBehavior? = null
 ) {
@@ -235,13 +267,11 @@ private fun TopBar(
                 )
             )
         },
-        navigationIcon = {
-            IconButton(
-                onClick = onBack
-            ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null) }
-        },
         actions = {
-            IconButton(onClick = onSave) {
+            IconButton(
+                onClick = { if (status != FlashingStatus.FLASHING) onSave() },
+                enabled = status != FlashingStatus.FLASHING
+            ) {
                 Icon(
                     imageVector = Icons.Filled.Save,
                     contentDescription = "Localized description"
