@@ -21,9 +21,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -69,13 +71,6 @@ fun HomeScreen(navigator: DestinationsNavigator) {
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             val isManager = Natives.becomeManager(ksuApp.packageName)
-            SideEffect {
-                if (isManager) {
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        install()
-                    }, 2000)
-                }
-            }
             val ksuVersion = if (isManager) Natives.version else null
             val lkmMode = ksuVersion?.let {
                 if (it >= Natives.MINIMAL_SUPPORTED_KERNEL_LKM && kernelVersion.isGKI()) Natives.isLkmMode else null
@@ -102,9 +97,10 @@ fun HomeScreen(navigator: DestinationsNavigator) {
             if (checkUpdate) {
                 UpdateCard()
             }
-            NextCard()
+            //NextCard()
             InfoCard()
-            EXperimentalCard()
+            IssueReportCard()
+            //EXperimentalCard()
             Spacer(Modifier)
         }
     }
@@ -272,6 +268,14 @@ private fun StatusCard(
                             text = stringResource(R.string.home_module_count, getModuleCount()),
                             style = MaterialTheme.typography.bodyMedium
                         )
+                        Spacer(Modifier.height(4.dp))
+                        val suSFS = getSuSFS()
+                        if (suSFS == "Supported") {
+                            Text(
+                                text = stringResource(R.string.home_susfs, getSuSFS()),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
                     }
                 }
 
@@ -299,7 +303,7 @@ private fun StatusCard(
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = stringResource(R.string.home_failure_reason),
+                            text = stringResource(R.string.home_failure_tip),
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }
@@ -345,15 +349,21 @@ private fun InfoCard() {
             val uname = Os.uname()
 
             @Composable
-            fun InfoCardItem(label: String, content: String, icon: ImageVector? = null) {
+            fun InfoCardItem(label: String, content: String, icon: Any? = null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (icon != null) {
-                        Icon(
-                            imageVector = icon,
-                            contentDescription = null,
-                            modifier = Modifier
-                                .padding(end = 16.dp)
-                        )
+                        when (icon) {
+                            is ImageVector -> Icon(
+                                imageVector = icon,
+                                contentDescription = null,
+                                modifier = Modifier.padding(end = 20.dp)
+                            )
+                            is Painter -> Icon(
+                                painter = icon,
+                                contentDescription = null,
+                                modifier = Modifier.padding(end = 20.dp)
+                            )
+                        }
                     }
                     Column {
                         Text(
@@ -371,15 +381,16 @@ private fun InfoCard() {
             }
 
 
-            InfoCardItem(stringResource(R.string.home_kernel),
-                uname.release,
-                icon = Icons.Filled.Memory,
+            InfoCardItem(
+                label = stringResource(R.string.home_kernel),
+                content = uname.release,
+                icon = painterResource(R.drawable.ic_linux),
             )
 
             Spacer(Modifier.height(16.dp))
             InfoCardItem(
-                stringResource(R.string.home_android),
-                "${Build.VERSION.RELEASE} (${Build.VERSION.SDK_INT})",
+                label = stringResource(R.string.home_android),
+                content = "${Build.VERSION.RELEASE} (${Build.VERSION.SDK_INT})",
                 icon = Icons.Filled.Android,
 
             )
@@ -387,9 +398,9 @@ private fun InfoCard() {
             Spacer(Modifier.height(16.dp))
             val managerVersion = getManagerVersion(context)
             InfoCardItem(
-                stringResource(R.string.home_manager_version),
-                "${managerVersion.first}-next (${managerVersion.second})",
-                icon = Icons.AutoMirrored.Filled.Article,
+                label = stringResource(R.string.home_manager_version),
+                content = "${managerVersion.first}-next (${managerVersion.second})",
+                icon = painterResource(R.drawable.ic_ksu_next),
             )
 
             Spacer(Modifier.height(16.dp))
@@ -398,6 +409,19 @@ private fun InfoCard() {
                 content = getSELinuxStatus(),
                 icon = Icons.Filled.Security,
             )
+            
+            Spacer(Modifier.height(16.dp))
+            val isSUS_SU = getSuSFSFeatures() == "CONFIG_KSU_SUSFS_SUS_SU"
+            val suSFS = getSuSFS()
+
+            if (suSFS == "Supported") {
+                val susSUMode = if (isSUS_SU) "| SuS SU mode: ${susfsSUS_SU_Mode()}" else ""
+                InfoCardItem(
+                    label = stringResource(R.string.home_susfs_version),
+                    content = "${getSuSFSVersion()} (${getSuSFSVariant()}) $susSUMode",
+                    icon = painterResource(R.drawable.ic_sus),
+                )
+            }
         }
     }
 }
@@ -470,6 +494,53 @@ fun EXperimentalCard() {
                     text = stringResource(R.string.home_experimental_kernelsu_body_point_3),
                     style = MaterialTheme.typography.bodyMedium
                 )
+            }
+        }
+    }
+}
+
+@Composable
+fun IssueReportCard() {
+    val uriHandler = LocalUriHandler.current
+    val githubIssueUrl = stringResource(R.string.issue_report_github_link)
+    val telegramUrl = stringResource(R.string.issue_report_telegram_link)
+
+    ElevatedCard {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.issue_report_title),
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = stringResource(R.string.issue_report_body),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = stringResource(R.string.issue_report_body_2),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                IconButton(onClick = { uriHandler.openUri(githubIssueUrl) }) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_github),
+                        contentDescription = stringResource(R.string.issue_report_github),
+                    )
+                }
+                IconButton(onClick = { uriHandler.openUri(telegramUrl) }) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_telegram),
+                        contentDescription = stringResource(R.string.issue_report_telegram),
+                    )
+                }
             }
         }
     }

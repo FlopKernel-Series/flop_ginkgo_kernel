@@ -26,13 +26,3 @@ updates:
       maven:
         patterns:
           - "*"
-  - package-ecosystem: npm
-    directory: website
-    schedule:
-      interval: daily
-    allow:
-      - dependency-type: "all"
-    groups:
-      npm:
-        patterns:
-          - "*"

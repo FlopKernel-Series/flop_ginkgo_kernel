@@ -7,7 +7,7 @@
 
 #include "ksu.h"
 
-#define LOG_TAG "KernelSU"
+#define LOG_TAG "KernelSU-Next"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 
 extern "C"
