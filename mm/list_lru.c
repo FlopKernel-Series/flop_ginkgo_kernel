@@ -48,15 +48,14 @@ static inline bool list_lru_memcg_aware(struct list_lru *lru)
 static inline struct list_lru_one *
 list_lru_from_memcg_idx(struct list_lru_node *nlru, int idx)
 {
-	struct list_lru_memcg *memcg_lrus;
 	/*
-	 * Either lock or RCU protects the array of per cgroup lists
-	 * from relocation (see memcg_update_list_lru_node).
+	 * The lock protects the array of per cgroup lists from relocation
+	 * (see memcg_update_list_lru_node).
 	 */
-	memcg_lrus = rcu_dereference_check(nlru->memcg_lrus,
-					   lockdep_is_held(&nlru->lock));
-	if (memcg_lrus && idx >= 0)
-		return memcg_lrus->lru[idx];
+	lockdep_assert_held(&nlru->lock);
+	if (nlru->memcg_lrus && idx >= 0)
+		return nlru->memcg_lrus->lru[idx];
+
 	return &nlru->lru;
 }
 
@@ -158,23 +157,25 @@ void list_lru_isolate_move(struct list_lru_one *list, struct list_head *item,
 }
 EXPORT_SYMBOL_GPL(list_lru_isolate_move);
 
-unsigned long list_lru_count_one(struct list_lru *lru,
-				 int nid, struct mem_cgroup *memcg)
+static unsigned long __list_lru_count_one(struct list_lru *lru,
+					  int nid, int memcg_idx)
 {
-#if defined(CONFIG_MEMCG) && !defined(CONFIG_SLOB)
 	struct list_lru_node *nlru = &lru->node[nid];
 	struct list_lru_one *l;
 	unsigned long count;
 
-	rcu_read_lock();
-	l = list_lru_from_memcg_idx(nlru, memcg_cache_id(memcg));
-	count = READ_ONCE(l->nr_items);
-	rcu_read_unlock();
+	spin_lock(&nlru->lock);
+	l = list_lru_from_memcg_idx(nlru, memcg_idx);
+	count = l->nr_items;
+	spin_unlock(&nlru->lock);
 
 	return count;
-#else
-	return READ_ONCE(lru->node[nid].lru.nr_items);
-#endif
+}
+
+unsigned long list_lru_count_one(struct list_lru *lru,
+				 int nid, struct mem_cgroup *memcg)
+{
+	return __list_lru_count_one(lru, nid, memcg_cache_id(memcg));
 }
 EXPORT_SYMBOL_GPL(list_lru_count_one);
 
@@ -318,41 +319,24 @@ fail:
 
 static int memcg_init_list_lru_node(struct list_lru_node *nlru)
 {
-	struct list_lru_memcg *memcg_lrus;
 	int size = memcg_nr_cache_ids;
 
-	memcg_lrus = kvmalloc(sizeof(*memcg_lrus) +
-			      size * sizeof(void *), GFP_KERNEL);
-	if (!memcg_lrus)
+	nlru->memcg_lrus = kvmalloc(size * sizeof(void *), GFP_KERNEL);
+	if (!nlru->memcg_lrus)
 		return -ENOMEM;
 
-	if (__memcg_init_list_lru_node(memcg_lrus, 0, size)) {
-		kvfree(memcg_lrus);
+	if (__memcg_init_list_lru_node(nlru->memcg_lrus, 0, size)) {
+		kvfree(nlru->memcg_lrus);
 		return -ENOMEM;
 	}
-	RCU_INIT_POINTER(nlru->memcg_lrus, memcg_lrus);
 
 	return 0;
 }
 
 static void memcg_destroy_list_lru_node(struct list_lru_node *nlru)
 {
-	struct list_lru_memcg *memcg_lrus;
-	/*
-	 * This is called when shrinker has already been unregistered,
-	 * and nobody can use it. So, there is no need to use kvfree_rcu().
-	 */
-	memcg_lrus = rcu_dereference_protected(nlru->memcg_lrus, true);
-	__memcg_destroy_list_lru_node(memcg_lrus, 0, memcg_nr_cache_ids);
-	kvfree(memcg_lrus);
-}
-
-static void kvfree_rcu(struct rcu_head *head)
-{
-	struct list_lru_memcg *mlru;
-
-	mlru = container_of(head, struct list_lru_memcg, rcu);
-	kvfree(mlru);
+	__memcg_destroy_list_lru_node(nlru->memcg_lrus, 0, memcg_nr_cache_ids);
+	kvfree(nlru->memcg_lrus);
 }
 
 static int memcg_update_list_lru_node(struct list_lru_node *nlru,
@@ -362,9 +346,8 @@ static int memcg_update_list_lru_node(struct list_lru_node *nlru,
 
 	BUG_ON(old_size > new_size);
 
-	old = rcu_dereference_protected(nlru->memcg_lrus,
-					lockdep_is_held(&list_lrus_mutex));
-	new = kvmalloc(sizeof(*new) + new_size * sizeof(void *), GFP_KERNEL);
+	old = nlru->memcg_lrus;
+	new = kvmalloc(new_size * sizeof(void *), GFP_KERNEL);
 	if (!new)
 		return -ENOMEM;
 
@@ -373,33 +356,29 @@ static int memcg_update_list_lru_node(struct list_lru_node *nlru,
 		return -ENOMEM;
 	}
 
-	memcpy(&new->lru, &old->lru, old_size * sizeof(void *));
+	memcpy(new, old, old_size * sizeof(void *));
 
 	/*
-	 * The locking below allows readers that hold nlru->lock avoid taking
-	 * rcu_read_lock (see list_lru_from_memcg_idx).
+	 * The lock guarantees that we won't race with a reader
+	 * (see list_lru_from_memcg_idx).
 	 *
 	 * Since list_lru_{add,del} may be called under an IRQ-safe lock,
 	 * we have to use IRQ-safe primitives here to avoid deadlock.
 	 */
 	spin_lock_irq(&nlru->lock);
-	rcu_assign_pointer(nlru->memcg_lrus, new);
+	nlru->memcg_lrus = new;
 	spin_unlock_irq(&nlru->lock);
 
-	call_rcu(&old->rcu, kvfree_rcu);
+	kvfree(old);
 	return 0;
 }
 
 static void memcg_cancel_update_list_lru_node(struct list_lru_node *nlru,
 					      int old_size, int new_size)
 {
-	struct list_lru_memcg *memcg_lrus;
-
-	memcg_lrus = rcu_dereference_protected(nlru->memcg_lrus,
-					       lockdep_is_held(&list_lrus_mutex));
 	/* do not bother shrinking the array back to the old size, because we
 	 * cannot handle allocation failures here */
-	__memcg_destroy_list_lru_node(memcg_lrus, old_size, new_size);
+	__memcg_destroy_list_lru_node(nlru->memcg_lrus, old_size, new_size);
 }
 
 static int memcg_init_list_lru(struct list_lru *lru, bool memcg_aware)
