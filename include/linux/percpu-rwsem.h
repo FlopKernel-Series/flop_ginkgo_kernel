@@ -20,7 +20,7 @@ struct percpu_rw_semaphore {
 #define DEFINE_STATIC_PERCPU_RWSEM(name)				\
 static DEFINE_PER_CPU(unsigned int, __percpu_rwsem_rc_##name);		\
 static struct percpu_rw_semaphore name = {				\
-	.rss = __RCU_SYNC_INITIALIZER(name.rss),			\
+	.rss = __RCU_SYNC_INITIALIZER(name.rss, RCU_SCHED_SYNC),	\
 	.read_count = &__percpu_rwsem_rc_##name,			\
 	.rw_sem = __RWSEM_INITIALIZER(name.rw_sem),			\
 	.writer = __RCUWAIT_INITIALIZER(name.writer),			\
@@ -41,7 +41,7 @@ static inline void percpu_down_read_preempt_disable(struct percpu_rw_semaphore *
 	 * cannot both change sem->state from readers_fast and start checking
 	 * counters while we are here. So if we see !sem->state, we know that
 	 * the writer won't be checking until we're past the preempt_enable()
-	 * and that once the synchronize_rcu() is done, the writer will see
+	 * and that one the synchronize_sched() is done, the writer will see
 	 * anything we did within this RCU-sched read-size critical section.
 	 */
 	__this_cpu_inc(*sem->read_count);

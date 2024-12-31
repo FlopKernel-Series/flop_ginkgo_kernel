@@ -2204,7 +2204,7 @@ static void free_module(struct module *mod)
 	/* Remove this module from bug list, this uses list_del_rcu */
 	module_bug_cleanup(mod);
 	/* Wait for RCU-sched synchronizing before releasing mod->list and buglist. */
-	synchronize_rcu();
+	synchronize_sched();
 	mutex_unlock(&module_mutex);
 
 	/* This may be empty, but that's OK */
@@ -3181,11 +3181,6 @@ static int find_module_sections(struct module *mod, struct load_info *info)
 					     sizeof(*mod->tracepoints_ptrs),
 					     &mod->num_tracepoints);
 #endif
-#ifdef CONFIG_TREE_SRCU
-	mod->srcu_struct_ptrs = section_objs(info, "___srcu_struct_ptrs",
-					     sizeof(*mod->srcu_struct_ptrs),
-					     &mod->num_srcu_structs);
-#endif
 #ifdef HAVE_JUMP_LABEL
 	mod->jump_entries = section_objs(info, "__jump_table",
 					sizeof(*mod->jump_entries),
@@ -3594,15 +3589,15 @@ static noinline int do_init_module(struct module *mod)
 	/*
 	 * We want to free module_init, but be aware that kallsyms may be
 	 * walking this with preempt disabled.  In all the failure paths, we
-	 * call synchronize_rcu(), but we don't want to slow down the success
+	 * call synchronize_sched(), but we don't want to slow down the success
 	 * path, so use actual RCU here.
 	 * Note that module_alloc() on most architectures creates W+X page
 	 * mappings which won't be cleaned up until do_free_init() runs.  Any
 	 * code such as mark_rodata_ro() which depends on those mappings to
 	 * be cleaned up needs to sync with the queued work - ie
-	 * rcu_barrier()
+	 * rcu_barrier_sched()
 	 */
-	call_rcu(&freeinit->rcu, do_free_init);
+	call_rcu_sched(&freeinit->rcu, do_free_init);
 	mutex_unlock(&module_mutex);
 	wake_up_all(&module_wq);
 
@@ -3613,7 +3608,7 @@ fail_free_freeinit:
 fail:
 	/* Try to protect us from buggy refcounters. */
 	mod->state = MODULE_STATE_GOING;
-	synchronize_rcu();
+	synchronize_sched();
 	module_put(mod);
 	blocking_notifier_call_chain(&module_notify_list,
 				     MODULE_STATE_GOING, mod);
@@ -3905,7 +3900,7 @@ static int load_module(struct load_info *info, const char __user *uargs,
 
  ddebug_cleanup:
 	dynamic_debug_remove(mod, info->debug);
-	synchronize_rcu();
+	synchronize_sched();
 	kfree(mod->args);
  free_arch_cleanup:
 	module_arch_cleanup(mod);
@@ -3920,7 +3915,7 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	mod_tree_remove(mod);
 	wake_up_all(&module_wq);
 	/* Wait for RCU-sched synchronizing before releasing mod->list. */
-	synchronize_rcu();
+	synchronize_sched();
 	mutex_unlock(&module_mutex);
  free_module:
 	/*

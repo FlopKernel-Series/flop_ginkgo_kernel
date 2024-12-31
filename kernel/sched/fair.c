@@ -1737,7 +1737,7 @@ static void task_numa_compare(struct task_numa_env *env,
 	int dist = env->dist;
 
 	rcu_read_lock();
-	cur = rcu_dereference(dst_rq->curr);
+	cur = task_rcu_dereference(&dst_rq->curr);
 	if (cur && ((cur->flags & PF_EXITING) || is_idle_task(cur)))
 		cur = NULL;
 

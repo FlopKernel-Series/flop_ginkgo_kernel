@@ -1325,6 +1325,7 @@ config DEBUG_LOCKING_API_SELFTESTS
 
 config LOCK_TORTURE_TEST
 	tristate "torture tests for locking"
+	depends on DEBUG_KERNEL
 	select TORTURE_TEST
 	default n
 	help
