@@ -150,6 +150,10 @@ void escape_to_root(void)
 	       sizeof(cred->cap_bset));
 	memcpy(&cred->cap_ambient, &profile->capabilities.effective,
 	       sizeof(cred->cap_ambient));
+	// set ambient caps to all-zero
+	// fixes "operation not permitted" on dbus cap dropping
+	memset(&cred->cap_ambient, 0,
+			sizeof(cred->cap_ambient));
 
 	// disable seccomp
 #if defined(CONFIG_GENERIC_ENTRY) &&                                           \
@@ -543,6 +547,7 @@ int ksu_handle_setuid(struct cred *new, const struct cred *old)
 	// fixme: use `collect_mounts` and `iterate_mount` to iterate all mountpoint and
 	// filter the mountpoint whose target is `/data/adb`
 	try_umount("/system", true, 0);
+	try_umount("/system_ext", true, 0);
 	try_umount("/vendor", true, 0);
 	try_umount("/product", true, 0);
 	try_umount("/data/adb/modules", false, MNT_DETACH);
@@ -550,6 +555,9 @@ int ksu_handle_setuid(struct cred *new, const struct cred *old)
 	// try umount ksu temp path
 	try_umount("/debug_ramdisk", false, MNT_DETACH);
 	try_umount("/sbin", false, MNT_DETACH);
+	
+	// try umount hosts file
+	try_umount("/system/etc/hosts", false, MNT_DETACH);
 
 	return 0;
 }

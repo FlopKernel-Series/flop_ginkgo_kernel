@@ -18,13 +18,13 @@
     <string name="home_module_count">Modules: %d</string>
     <string name="home_failure">KernelSU Next v2 signature not found in kernel! [ !KSU_NEXT || != size/hash ]</string>
     <string name="home_failure_tip">Ask your kernel developer to integrate KernelSU Next!</string>
-    <string name="home_kernel">Kernel</string>
+    <string name="home_kernel">Kernel Version</string>
     <string name="home_susfs">SuSFS: %s</string>
     <string name="home_susfs_version">SuSFS</string>
     <string name="home_susfs_sus_su">SuS SU</string>
-    <string name="home_android">Android</string>
-    <string name="home_manager_version">Manager</string>
-    <string name="home_selinux_status">SELinux</string>
+    <string name="home_android">Android Version</string>
+    <string name="home_manager_version">Manager Version</string>
+    <string name="home_selinux_status">SELinux Mode</string>
     <string name="selinux_status_disabled">Disabled</string>
     <string name="selinux_status_enforcing">Enforcing</string>
     <string name="selinux_status_permissive">Permissive</string>
@@ -36,6 +36,8 @@
     <string name="module">Module</string>
     <string name="confirm_module_installation">Confirm Installation</string>
     <string name="module_install_prompt_with_name">Do you want to continue installing module %1$s?</string>
+    <string name="module_sort_action_first">Sort (Action First)</string>
+    <string name="module_sort_enabled_first">Sort (Enabled First)</string>
     <string name="uninstall">Uninstall</string>
     <string name="restore">Restore</string>
     <string name="module_install">Install</string>
@@ -64,6 +66,8 @@
     <string name="safe_mode">Safe mode</string>
     <string name="reboot_to_apply">Reboot to take effect</string>
     <string name="module_magisk_conflict">Modules are unavailable due to a conflict with Magisk!</string>
+    <string name="home_module_mount">Module System</string>
+    <string name="home_magic_mount">Magic Mount</string>
     <string name="home_next_kernelsu">🔥 Next Build</string>
     <string name="home_next_kernelsu_repo">https://github.com/rifsxd/KernelSU-Next</string>
     <string name="home_next_kernelsu_body">Next experimental branch. Check it out on GitHub!</string>
@@ -101,6 +105,7 @@
     <string name="module_start_downloading">Start downloading: %s</string>
     <string name="new_version_available">New version %s is available, click to upgrade.</string>
     <string name="launch_app">Launch</string>
+    <string name="close">Close</string>
     <string name="force_stop_app">Force stop</string>
     <string name="restart_app">Restart</string>
     <string name="failed_to_update_sepolicy">Failed to update SELinux rules for: %s</string>

@@ -36,12 +36,16 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
@@ -111,9 +115,13 @@ fun ModuleScreen(navigator: DestinationsNavigator) {
     val viewModel = viewModel<ModuleViewModel>()
     val context = LocalContext.current
     val snackBarHost = LocalSnackbarHost.current
+    val scope = rememberCoroutineScope()
+    val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
     LaunchedEffect(Unit) {
         if (viewModel.moduleList.isEmpty() || viewModel.isNeedRefresh) {
+            viewModel.sortEnabledFirst = prefs.getBoolean("module_sort_enabled_first", false)
+            viewModel.sortActionFirst = prefs.getBoolean("module_sort_action_first", false)
             viewModel.fetchModuleList()
         }
     }
@@ -128,9 +136,62 @@ fun ModuleScreen(navigator: DestinationsNavigator) {
     var zipUri by remember { mutableStateOf<Uri?>(null) }
     var showConfirmDialog by remember { mutableStateOf(false) }
 
+    val webUILauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { viewModel.fetchModuleList() }
+
     Scaffold(
         topBar = {
             TopAppBar(
+                actions = {
+                    var showDropdown by remember { mutableStateOf(false) }
+                    IconButton(
+                        onClick = { showDropdown = true },
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.MoreVert,
+                            contentDescription = stringResource(id = R.string.settings)
+                        )
+                        DropdownMenu(expanded = showDropdown, onDismissRequest = {
+                            showDropdown = false
+                        }) {
+                            DropdownMenuItem(text = {
+                                Text(stringResource(R.string.module_sort_action_first))
+                            }, trailingIcon = {
+                                Checkbox(viewModel.sortActionFirst, null)
+                            }, onClick = {
+                                viewModel.sortActionFirst =
+                                    !viewModel.sortActionFirst
+                                prefs.edit()
+                                    .putBoolean(
+                                        "module_sort_action_first",
+                                        viewModel.sortActionFirst
+                                    )
+                                    .apply()
+                                scope.launch {
+                                    viewModel.fetchModuleList()
+                                }
+                            })
+                            DropdownMenuItem(text = {
+                                Text(stringResource(R.string.module_sort_enabled_first))
+                            }, trailingIcon = {
+                                Checkbox(viewModel.sortEnabledFirst, null)
+                            }, onClick = {
+                                viewModel.sortEnabledFirst =
+                                    !viewModel.sortEnabledFirst
+                                prefs.edit()
+                                    .putBoolean(
+                                        "module_sort_enabled_first",
+                                        viewModel.sortEnabledFirst
+                                    )
+                                    .apply()
+                                scope.launch {
+                                    viewModel.fetchModuleList()
+                                }
+                            })
+                        }
+                    }
+                },
                 scrollBehavior = scrollBehavior,
                 title = { Text(stringResource(R.string.module)) },
                 windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
@@ -226,7 +287,7 @@ fun ModuleScreen(navigator: DestinationsNavigator) {
                     },
                     onClickModule = { id, name, hasWebUi ->
                         if (hasWebUi) {
-                            context.startActivity(
+                            webUILauncher.launch(
                                 Intent(context, WebUIActivity::class.java)
                                     .setData(Uri.parse("kernelsu://webui/$id"))
                                     .putExtra("id", id)
@@ -355,7 +416,7 @@ private fun ModuleList(
 
         val success = loadingDialog.withLoading {
             withContext(Dispatchers.IO) {
-                uninstallModule(module.id)
+                uninstallModule(module.dirId)
             }
         }
 
@@ -395,7 +456,7 @@ private fun ModuleList(
 
         val success = loadingDialog.withLoading {
             withContext(Dispatchers.IO) {
-                restoreModule(module.id)
+                restoreModule(module.dirId)
             }
         }
 
@@ -428,7 +489,7 @@ private fun ModuleList(
             },
         ) {
             when {
-                !viewModel.isOverlayAvailable -> {
+                !viewModel.isDummy -> {
                     item {
                         Box(
                             modifier = Modifier.fillParentMaxSize(),
@@ -481,7 +542,7 @@ private fun ModuleList(
                                 scope.launch {
                                     val success = loadingDialog.withLoading {
                                         withContext(Dispatchers.IO) {
-                                            toggleModule(module.id, !isChecked)
+                                            toggleModule(module.dirId, !isChecked)
                                         }
                                     }
                                     if (success) {
@@ -644,7 +705,7 @@ fun ModuleItem(
                     FilledTonalButton(
                         modifier = Modifier.defaultMinSize(52.dp, 32.dp),
                         onClick = {
-                            navigator.navigate(ExecuteModuleActionScreenDestination(module.id))
+                            navigator.navigate(ExecuteModuleActionScreenDestination(module.dirId))
                             viewModel.markNeedRefresh()
                         },
                         contentPadding = ButtonDefaults.TextButtonContentPadding
@@ -779,7 +840,8 @@ fun ModuleItemPreview() {
         remove = false,
         updateJson = "",
         hasWebUi = false,
-        hasActionScript = false
+        hasActionScript = false,
+        dirId = "dirId"
     )
     ModuleItem(EmptyDestinationsNavigator, module, true, "", {}, {}, {}, {}, {})
 }

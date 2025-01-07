@@ -22,7 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Android
-import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -183,7 +183,7 @@ private fun AppProfileInner(
         }
 
         SwitchItem(
-            icon = Icons.Filled.Security,
+            icon = Icons.Filled.AdminPanelSettings,
             title = stringResource(id = R.string.superuser),
             checked = isRootGranted,
             onCheckedChange = { onProfileChange(profile.copy(allowSu = it)) },

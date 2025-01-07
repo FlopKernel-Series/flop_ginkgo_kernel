@@ -1,4 +1,4 @@
-**English** | [简体中文](/docs/README_CN.md)
+**English** | [简体中文](/docs/README_CN.md) | [Türkçe](/docs/README_TR.md)
 
 # KernelSU Next
 
@@ -14,15 +14,15 @@ A Kernel-based root solution for Android devices.
 ## Features
 
 1. Kernel-based `su` and root access management.
-2. Module system based on [OverlayFS](https://en.wikipedia.org/wiki/OverlayFS).
+2. Module system based on [Magic Mount](https://github.com/topjohnwu/Magisk/blob/c512496847d182526f2043295ecfd275398eccac/docs/releases/26100.md#new-magic-mount-implementation).
 3. [App Profile](https://kernelsu.org/guide/app-profile.html): Lock up the root power in a cage.
 
 ## Compatibility State
 
-KernelSU Next officially supports most Android kernels starting from 4.14 upto 6.6.
+KernelSU Next officially supports most Android kernels starting from 4.4 upto 6.6.
  - GKI 2.0 (5.10+) kernels can run pre-built images and LKM/KMI.
  - GKI 1.0 (4.19 - 5.4) kernels need to rebuilt with KernelSU driver.
- - EOL (<4.19) kernels also need to be rebuilt with KernelSU driver.
+ - EOL (<4.14) kernels also need to be rebuilt with KernelSU driver. (3.18+ is experimental and may need some function backports)
 
 Currently, only `arm64-v8a` is supported.
 
@@ -42,3 +42,4 @@ For information on reporting security vulnerabilities in KernelSU, see [SECURITY
 - [genuine](https://github.com/brevent/genuine/): apk v2 signature validation.
 - [Diamorphine](https://github.com/m0nad/Diamorphine): some rootkit skills.
 - [KernelSU](https://github.com/tiann/KernelSU): thanks to tiann or else KernelSU Next wouldn't even exist.
+- [Magic Mount Port](https://github.com/5ec1cff/KernelSU/blob/main/userspace/ksud/src/magic_mount.rs): 💜 5ec1cff for saving KernelSU!

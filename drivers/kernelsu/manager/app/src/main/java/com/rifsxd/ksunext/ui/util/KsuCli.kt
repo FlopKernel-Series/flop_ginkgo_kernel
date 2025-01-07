@@ -120,50 +120,50 @@ fun getModuleCount(): Int {
     }.getOrElse { return 0 }
 }
 
-private fun getSuSFSPath(): String {
-    return ksuApp.applicationInfo.nativeLibraryDir + File.separator + "libsusfs.so"
-}
+// private fun getSuSFSDaemonPath(): String {
+//     return ksuApp.applicationInfo.nativeLibraryDir + File.separator + "libsusfsd.so"
+// }
 
-fun getSuSFS(): String {
-    val shell = getRootShell()
-    val result = ShellUtils.fastCmd(shell, "${getSuSFSPath()} support")
-    return result
-}
+// fun getSuSFS(): String {
+//     val shell = getRootShell()
+//     val result = ShellUtils.fastCmd(shell, "${getSuSFSDaemonPath()} support")
+//     return result
+// }
 
-fun getSuSFSVersion(): String {
-    val shell = getRootShell()
-    val result = ShellUtils.fastCmd(shell, "${getSuSFSPath()} version")
-    return result
-}
+// fun getSuSFSVersion(): String {
+//     val shell = getRootShell()
+//     val result = ShellUtils.fastCmd(shell, "${getSuSFSDaemonPath()} version")
+//     return result
+// }
 
-fun getSuSFSVariant(): String {
-    val shell = getRootShell()
-    val result = ShellUtils.fastCmd(shell, "${getSuSFSPath()} variant")
-    return result
-}
-fun getSuSFSFeatures(): String {
-    val shell = getRootShell()
-    val result = ShellUtils.fastCmd(shell, "${getSuSFSPath()} features")
-    return result
-}
+// fun getSuSFSVariant(): String {
+//     val shell = getRootShell()
+//     val result = ShellUtils.fastCmd(shell, "${getSuSFSDaemonPath()} variant")
+//     return result
+// }
+// fun getSuSFSFeatures(): String {
+//     val shell = getRootShell()
+//     val result = ShellUtils.fastCmd(shell, "${getSuSFSDaemonPath()} features")
+//     return result
+// }
 
-fun susfsSUS_SU_0(): String {
-    val shell = getRootShell()
-    val result = ShellUtils.fastCmd(shell, "${getSuSFSPath()} sus_su 0")
-    return result
-}
+// fun susfsSUS_SU_0(): String {
+//     val shell = getRootShell()
+//     val result = ShellUtils.fastCmd(shell, "${getSuSFSDaemonPath()} sus_su 0")
+//     return result
+// }
 
-fun susfsSUS_SU_2(): String {
-    val shell = getRootShell()
-    val result = ShellUtils.fastCmd(shell, "${getSuSFSPath()} sus_su 2")
-    return result
-}
+// fun susfsSUS_SU_2(): String {
+//     val shell = getRootShell()
+//     val result = ShellUtils.fastCmd(shell, "${getSuSFSDaemonPath()} sus_su 2")
+//     return result
+// }
 
-fun susfsSUS_SU_Mode(): String {
-    val shell = getRootShell()
-    val result = ShellUtils.fastCmd(shell, "${getSuSFSPath()} sus_su mode")
-    return result
-}
+// fun susfsSUS_SU_Mode(): String {
+//     val shell = getRootShell()
+//     val result = ShellUtils.fastCmd(shell, "${getSuSFSDaemonPath()} sus_su mode")
+//     return result
+// }
 
 fun getSuperuserCount(): Int {
     return Natives.allowList.size
@@ -231,7 +231,7 @@ fun flashModule(
         }
         val cmd = "module install ${file.absolutePath}"
         val result = flashWithIO("${getKsuDaemonPath()} $cmd", onStdout, onStderr)
-        Log.i("KernelSU-Next", "install module $uri result: $result")
+        Log.i("KernelSU", "install module $uri result: $result")
 
         file.delete()
 
@@ -259,7 +259,7 @@ fun runModuleAction(
 
     val result = shell.newJob().add("${getKsuDaemonPath()} module action $moduleId")
         .to(stdoutCallback, stderrCallback).exec()
-    Log.i("KernelSU-Next", "Module runAction result: $result")
+    Log.i("KernelSU", "Module runAction result: $result")
 
     return result.isSuccess
 }
@@ -357,7 +357,7 @@ fun installBoot(
     cmd += " -o $downloadsDir"
 
     val result = flashWithIO("${getKsuDaemonPath()} $cmd", onStdout, onStderr)
-    Log.i("KernelSU-Next", "install boot result: ${result.isSuccess}")
+    Log.i("KernelSU", "install boot result: ${result.isSuccess}")
 
     bootFile?.delete()
     lkmFile?.delete()
@@ -403,10 +403,12 @@ suspend fun getSupportedKmis(): List<String> = withContext(Dispatchers.IO) {
     out.filter { it.isNotBlank() }.map { it.trim() }
 }
 
-fun overlayFsAvailable(): Boolean {
-    val shell = getRootShell()
-    // check /proc/filesystems
-    return ShellUtils.fastCmdResult(shell, "cat /proc/filesystems | grep overlay")
+fun hasDummy(): Boolean {
+//fun overlayFsAvailable(): Boolean {
+    // val shell = getRootShell()
+    // // check /proc/filesystems
+    // return ShellUtils.fastCmdResult(shell, "cat /proc/filesystems | grep overlay")
+    return true
 }
 
 fun hasMagisk(): Boolean {

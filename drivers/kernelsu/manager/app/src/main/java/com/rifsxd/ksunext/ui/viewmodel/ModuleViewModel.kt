@@ -11,11 +11,9 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import com.rifsxd.ksunext.ui.util.listModules
-import com.rifsxd.ksunext.ui.util.overlayFsAvailable
+import com.rifsxd.ksunext.ui.util.hasDummy
 import org.json.JSONArray
 import org.json.JSONObject
-import java.text.Collator
-import java.util.Locale
 
 class ModuleViewModel : ViewModel() {
 
@@ -37,6 +35,7 @@ class ModuleViewModel : ViewModel() {
         val updateJson: String,
         val hasWebUi: Boolean,
         val hasActionScript: Boolean,
+        val dirId: String
     )
 
     data class ModuleUpdateInfo(
@@ -46,14 +45,20 @@ class ModuleViewModel : ViewModel() {
         val changelog: String,
     )
 
-    var isOverlayAvailable by mutableStateOf(overlayFsAvailable())
+    var isDummy by mutableStateOf(hasDummy())
         private set
 
     var isRefreshing by mutableStateOf(false)
         private set
 
+    var sortEnabledFirst by mutableStateOf(false)
+    var sortActionFirst by mutableStateOf(false)
     val moduleList by derivedStateOf {
-        val comparator = compareBy(Collator.getInstance(Locale.getDefault()), ModuleInfo::id)
+        val comparator =
+            compareBy<ModuleInfo>(
+                { if (sortEnabledFirst) !it.enabled else 0 },
+                { if (sortActionFirst) !it.hasWebUi && !it.hasActionScript else 0 },
+                { it.id })
         modules.sortedWith(comparator).also {
             isRefreshing = false
         }
@@ -75,7 +80,7 @@ class ModuleViewModel : ViewModel() {
             val start = SystemClock.elapsedRealtime()
 
             kotlin.runCatching {
-                isOverlayAvailable = overlayFsAvailable()
+                isDummy = hasDummy()
                 
                 val result = listModules()
 
@@ -98,7 +103,8 @@ class ModuleViewModel : ViewModel() {
                             obj.getBoolean("remove"),
                             obj.optString("updateJson"),
                             obj.optBoolean("web"),
-                            obj.optBoolean("action")
+                            obj.optBoolean("action"),
+                            obj.getString("dir_id")
                         )
                     }.toList()
                 isNeedRefresh = false
