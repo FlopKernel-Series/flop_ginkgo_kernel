@@ -160,31 +160,31 @@ fun SettingScreen(navigator: DestinationsNavigator) {
 
             val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
-            val isSUS_SU = getSuSFSFeatures()
-            if (isSUS_SU == "CONFIG_KSU_SUSFS_SUS_SU") {
-                var isEnabled by rememberSaveable {
-                    mutableStateOf(susfsSUS_SU_Mode() == "2")
-                }
+            // val isSUS_SU = getSuSFSFeatures()
+            // if (isSUS_SU == "CONFIG_KSU_SUSFS_SUS_SU") {
+            //     var isEnabled by rememberSaveable {
+            //         mutableStateOf(susfsSUS_SU_Mode() == "2")
+            //     }
 
-                LaunchedEffect(Unit) {
-                    isEnabled = susfsSUS_SU_Mode() == "2"
-                }
+            //     LaunchedEffect(Unit) {
+            //         isEnabled = susfsSUS_SU_Mode() == "2"
+            //     }
 
-                SwitchItem(
-                    icon = Icons.Filled.VisibilityOff,
-                    title = stringResource(id = R.string.settings_susfs_toggle),
-                    summary = stringResource(id = R.string.settings_susfs_toggle_summary),
-                    checked = isEnabled
-                ) {
-                    if (it) {
-                        susfsSUS_SU_2()
-                    } else {
-                        susfsSUS_SU_0()
-                    }
-                    prefs.edit().putBoolean("enable_sus_su", it).apply()
-                    isEnabled = it
-                }
-            }
+            //     SwitchItem(
+            //         icon = Icons.Filled.VisibilityOff,
+            //         title = stringResource(id = R.string.settings_susfs_toggle),
+            //         summary = stringResource(id = R.string.settings_susfs_toggle_summary),
+            //         checked = isEnabled
+            //     ) {
+            //         if (it) {
+            //             susfsSUS_SU_2()
+            //         } else {
+            //             susfsSUS_SU_0()
+            //         }
+            //         prefs.edit().putBoolean("enable_sus_su", it).apply()
+            //         isEnabled = it
+            //     }
+            // }
 
             var checkUpdate by rememberSaveable {
                 mutableStateOf(
@@ -247,7 +247,7 @@ fun SettingScreen(navigator: DestinationsNavigator) {
                                         .clickable {
                                             val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH_mm")
                                             val current = LocalDateTime.now().format(formatter)
-                                            exportBugreportLauncher.launch("KernelSU_Next_bugreport_${current}.tar.gz")
+                                            exportBugreportLauncher.launch("KernelSU_bugreport_${current}.tar.gz")
                                             showBottomsheet = false
                                         }
                                 ) {

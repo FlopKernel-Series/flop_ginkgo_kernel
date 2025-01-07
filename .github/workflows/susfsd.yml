@@ -1,10 +1,10 @@
-name: Build SuSFS
+name: Build susfsd
 on:
   push:
     branches: [ "next" ]
     paths:
-      - '.github/workflows/build-susfs.yml'
-      - 'userspace/susfs/**'
+      - '.github/workflows/susfsd.yml'
+      - 'userspace/susfsd/**'
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -17,18 +17,18 @@ on:
         default: ubuntu-latest
 jobs:
   build-susfs:
-    name: Build userspace susfs
+    name: Build userspace susfsd
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
-    - name: Build susfs
-      working-directory: ./userspace/susfs
+    - name: Build susfsd
+      working-directory: ./userspace/susfsd
       run: $ANDROID_NDK/ndk-build
     - name: Upload a Build Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: susfs-aarch64-linux-android
-        path: ./userspace/susfs/libs
+        name: susfsd-aarch64-linux-android
+        path: ./userspace/susfsd/libs
     

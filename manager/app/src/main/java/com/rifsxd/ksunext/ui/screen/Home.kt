@@ -246,7 +246,7 @@ private fun StatusCard(
                     val workingText =
                         "${stringResource(id = R.string.home_working)}$workingMode$safeMode"
 
-                    Icon(Icons.Filled.LocalFireDepartment, stringResource(R.string.home_working))
+                    Icon(Icons.Filled.AcUnit, stringResource(R.string.home_working))
                     Column(Modifier.padding(start = 20.dp)) {
                         Text(
                             text = workingText,
@@ -268,14 +268,14 @@ private fun StatusCard(
                             text = stringResource(R.string.home_module_count, getModuleCount()),
                             style = MaterialTheme.typography.bodyMedium
                         )
-                        Spacer(Modifier.height(4.dp))
-                        val suSFS = getSuSFS()
-                        if (suSFS == "Supported") {
-                            Text(
-                                text = stringResource(R.string.home_susfs, getSuSFS()),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
+                        // Spacer(Modifier.height(4.dp))
+                        // val suSFS = getSuSFS()
+                        // if (suSFS == "Supported") {
+                        //     Text(
+                        //         text = stringResource(R.string.home_susfs, getSuSFS()),
+                        //         style = MaterialTheme.typography.bodyMedium
+                        //     )
+                        // }
                     }
                 }
 
@@ -399,7 +399,7 @@ private fun InfoCard() {
             val managerVersion = getManagerVersion(context)
             InfoCardItem(
                 label = stringResource(R.string.home_manager_version),
-                content = "${managerVersion.first}-next (${managerVersion.second})",
+                content = "${managerVersion.first} (${managerVersion.second})",
                 icon = painterResource(R.drawable.ic_ksu_next),
             )
 
@@ -409,19 +409,26 @@ private fun InfoCard() {
                 content = getSELinuxStatus(),
                 icon = Icons.Filled.Security,
             )
-            
-            Spacer(Modifier.height(16.dp))
-            val isSUS_SU = getSuSFSFeatures() == "CONFIG_KSU_SUSFS_SUS_SU"
-            val suSFS = getSuSFS()
 
-            if (suSFS == "Supported") {
-                val susSUMode = if (isSUS_SU) "| SuS SU mode: ${susfsSUS_SU_Mode()}" else ""
-                InfoCardItem(
-                    label = stringResource(R.string.home_susfs_version),
-                    content = "${getSuSFSVersion()} (${getSuSFSVariant()}) $susSUMode",
-                    icon = painterResource(R.drawable.ic_sus),
-                )
-            }
+            Spacer(Modifier.height(16.dp))
+            InfoCardItem(
+                label = stringResource(R.string.home_module_mount),
+                content = stringResource(R.string.home_magic_mount),
+                icon = Icons.Filled.SettingsSuggest,
+            )
+            
+            // Spacer(Modifier.height(16.dp))
+            // val isSUS_SU = getSuSFSFeatures() == "CONFIG_KSU_SUSFS_SUS_SU"
+            // val suSFS = getSuSFS()
+
+            // if (suSFS == "Supported") {
+            //     val susSUMode = if (isSUS_SU) "| SuS SU mode: ${susfsSUS_SU_Mode()}" else ""
+            //     InfoCardItem(
+            //         label = stringResource(R.string.home_susfs_version),
+            //         content = "${getSuSFSVersion()} (${getSuSFSVariant()}) $susSUMode",
+            //         icon = painterResource(R.drawable.ic_sus),
+            //     )
+            // }
         }
     }
 }
