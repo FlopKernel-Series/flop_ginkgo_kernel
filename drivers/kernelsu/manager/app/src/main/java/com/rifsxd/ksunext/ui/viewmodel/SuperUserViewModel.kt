@@ -31,6 +31,9 @@ import kotlin.coroutines.suspendCoroutine
 
 class SuperUserViewModel : ViewModel() {
 
+    var refreshOnReturn by mutableStateOf(false)
+        public set
+
     companion object {
         private const val TAG = "SuperUserViewModel"
         private var apps by mutableStateOf<List<AppInfo>>(emptyList())

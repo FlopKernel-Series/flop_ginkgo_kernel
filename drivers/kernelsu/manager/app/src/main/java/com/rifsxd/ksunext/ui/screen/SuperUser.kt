@@ -56,6 +56,13 @@ fun SuperUserScreen(navigator: DestinationsNavigator) {
         }
     }
 
+    LaunchedEffect(Unit) {
+        if (viewModel.refreshOnReturn) {
+            viewModel.fetchAppList()
+            viewModel.refreshOnReturn = false
+        }
+    }
+
     Scaffold(
         topBar = {
             SearchAppBar(
@@ -120,6 +127,7 @@ fun SuperUserScreen(navigator: DestinationsNavigator) {
             ) {
                 items(viewModel.appList, key = { it.packageName + it.uid }) { app ->
                     AppItem(app) {
+                        viewModel.refreshOnReturn = true
                         navigator.navigate(AppProfileScreenDestination(app))
                     }
                 }

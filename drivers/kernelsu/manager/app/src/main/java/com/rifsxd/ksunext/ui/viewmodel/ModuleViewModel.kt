@@ -10,8 +10,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.text.Collator
+import java.util.Locale
+import com.rifsxd.ksunext.ui.util.HanziToPinyin
 import com.rifsxd.ksunext.ui.util.listModules
-import com.rifsxd.ksunext.ui.util.hasDummy
+import com.rifsxd.ksunext.ui.util.overlayFsAvailable
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -45,24 +48,33 @@ class ModuleViewModel : ViewModel() {
         val changelog: String,
     )
 
-    var isDummy by mutableStateOf(hasDummy())
+    var isOverlayAvailable by mutableStateOf(overlayFsAvailable())
         private set
 
     var isRefreshing by mutableStateOf(false)
         private set
 
-    var sortEnabledFirst by mutableStateOf(false)
-    var sortActionFirst by mutableStateOf(false)
+    var search by mutableStateOf("")
+
+    var sortAToZ by mutableStateOf(false)
+    var sortZToA by mutableStateOf(false)
+
     val moduleList by derivedStateOf {
-        val comparator =
-            compareBy<ModuleInfo>(
-                { if (sortEnabledFirst) !it.enabled else 0 },
-                { if (sortActionFirst) !it.hasWebUi && !it.hasActionScript else 0 },
-                { it.id })
-        modules.sortedWith(comparator).also {
+        val comparator = when {
+            sortAToZ -> compareBy<ModuleInfo> { it.name.lowercase() }
+            sortZToA -> compareByDescending<ModuleInfo> { it.name.lowercase() }
+            else -> compareBy<ModuleInfo> { it.dirId }
+        }.thenBy(Collator.getInstance(Locale.getDefault()), ModuleInfo::id)
+
+        modules.filter {
+            it.id.contains(search, ignoreCase = true) ||
+            it.name.contains(search, ignoreCase = true) ||
+            HanziToPinyin.getInstance().toPinyinString(it.name).contains(search, ignoreCase = true)
+        }.sortedWith(comparator).also {
             isRefreshing = false
         }
     }
+
 
     var isNeedRefresh by mutableStateOf(false)
         private set
@@ -80,8 +92,8 @@ class ModuleViewModel : ViewModel() {
             val start = SystemClock.elapsedRealtime()
 
             kotlin.runCatching {
-                isDummy = hasDummy()
-                
+                isOverlayAvailable = overlayFsAvailable()
+
                 val result = listModules()
 
                 Log.i(TAG, "result: $result")
