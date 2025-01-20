@@ -477,8 +477,8 @@ upload() {
 }
 
 clean() {
-    make clean
-    make mrproper
+    make O=out clean
+    make O=out mrproper
 }
 
 clean_tmp() {
