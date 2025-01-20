@@ -1189,21 +1189,34 @@ static uint64_t netbpfload_pid = 0;
 SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 {
 	struct new_utsname tmp;
-	bool bpf_spoof = true; // Spoof by default
+	bool bpf_spoof = false; // Don't spoof by default
 
-	// Parse the kernel command line for "skip_bpfspoof"
-	if (strstr(saved_command_line, "skip_bpfspoof")) {
-		bpf_spoof = false;
+	// Parse the kernel command line for "bpf_highspoof"
+	if (strstr(saved_command_line, "bpf_highspoof")) {
+		bpf_spoof = true;
 	}
 
 	down_read(&uts_sem);
 	memcpy(&tmp, utsname(), sizeof(tmp));
-	if (bpf_spoof && !strncmp(current->comm, "netbpfload", 10) &&
-	    current->pid != netbpfload_pid) {
-		netbpfload_pid = current->pid;
-		strcpy(tmp.release, "6.6.40");
-		pr_debug("fake uname: %s/%d release=%s\n",
-			 current->comm, current->pid, tmp.release);
+
+	if (bpf_spoof) {
+		if (!strncmp(current->comm, "bpfloader", 9) ||
+			!strncmp(current->comm, "netbpfload", 10) ||
+			!strncmp(current->comm, "netd", 4)) {
+			netbpfload_pid = current->pid;
+			strcpy(tmp.release, "6.6.40");
+			pr_debug("fake uname: %s/%d release=%s\n",
+				current->comm, current->pid, tmp.release);
+		}
+	} else {
+		if (!strncmp(current->comm, "bpfloader", 9) ||
+			!strncmp(current->comm, "netbpfload", 10) ||
+			!strncmp(current->comm, "netd", 4)) {
+			netbpfload_pid = current->pid;
+			strcpy(tmp.release, "4.19.325");
+			pr_debug("fake uname: %s/%d release=%s\n",
+				current->comm, current->pid, tmp.release);
+		}
 	}
 #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
 	susfs_spoof_uname(&tmp);
