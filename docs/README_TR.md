@@ -1,4 +1,4 @@
-[English](README.md) | [简体中文](/docs/README_CN.md) | **Türkçe**
+[English](README.md) | [简体中文](README_CN.md) | [繁體中文](README_TW.md) | **Türkçe** | [Português (Brasil)](README_PT-BR.md) | [한국어](README_KO.md) | [Français](README_FR.md) | [Bahasa Indonesia](README_ID.md) | [Русский](README_RU.md) | [ภาษาไทย](README_TH.md)
 
 # KernelSU Next
 
@@ -6,15 +6,15 @@
 
 Android cihazlar için Kernel tabanlı bir root çözümü.
 
-[![Latest release](https://img.shields.io/github/v/release/rifsxd/KernelSU-Next?label=Release&logo=github)](https://github.com/rifsxd/KernelSU-Next/releases/latest)
-[![Nightly Release](https://img.shields.io/badge/Nightly%20release-gray?logo=hackthebox&logoColor=fff)](https://nightly.link/rifsxd/KernelSU-Next/workflows/build-manager/next/manager)
+[![Latest Release](https://img.shields.io/github/v/release/rifsxd/KernelSU-Next?label=Release&logo=github)](https://github.com/rifsxd/KernelSU-Next/releases/latest)
+[![Nightly Release](https://img.shields.io/badge/Nightly%20Release-gray?logo=hackthebox&logoColor=fff)](https://nightly.link/rifsxd/KernelSU-Next/workflows/build-manager/next/manager)
 [![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2-orange.svg?logo=gnu)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
 [![GitHub License](https://img.shields.io/github/license/rifsxd/KernelSU-Next?logo=gnu)](/LICENSE)
 
 ## Özellikler
 
 1. Çekirdek tabanlı `su` ve kök erişim yönetimi.
-2. [Magic Mount](https://github.com/topjohnwu/Magisk/blob/c512496847d182526f2043295ecfd275398eccac/docs/releases/26100.md#new-magic-mount-implementation) tabanlı modül sistemi.
+2. Dinamik montaj sistemine dayalı modül sistemi [Magic Mount](https://topjohnwu.github.io/Magisk/details.html#magic-mount) / [OverlayFS](https://en.wikipedia.org/wiki/OverlayFS).
 3. [App Profile](https://kernelsu.org/guide/app-profile.html): Kök gücünü bir kafese kilitleyin.
 
 ## Uyumluluk Durumu
@@ -25,6 +25,10 @@ KernelSU Next, 4.4'dan başlayarak 6.6'ya kadar çoğu Android çekirdeğini res
  - EOL (<4.14) çekirdeklerinin de KernelSU sürücüsü ile yeniden oluşturulması gerekir. (3.18+ deneyseldir ve bazı fonksiyon geri yüklemelerine ihtiyaç duyulabilir.)
 
 Şu anda sadece `arm64-v8a` desteklenmektedir.
+
+## Kullanım
+
+- [Kurulum Talimatı](https://rifsxd.github.io/KernelSU-Next/)
 
 ## Güvenlik
 

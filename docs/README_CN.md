@@ -1,4 +1,4 @@
-[English](README.md) | **简体中文** | [Türkçe](README_TR.md)
+[English](README.md) | **简体中文** | [繁體中文](README_TW.md) | [Türkçe](README_TR.md) | [Português (Brasil)](README_PT-BR.md) | [한국어](README_KO.md) | [Français](README_FR.md) | [Bahasa Indonesia](README_ID.md) | [Русский](README_RU.md) | [ภาษาไทย](README_TH.md)
 
 # KernelSU Next
 
@@ -6,25 +6,29 @@
 
 安卓基于内核的 Root 方案
 
-[![Latest release](https://img.shields.io/github/v/release/rifsxd/KernelSU-Next?label=Release&logo=github)](https://github.com/rifsxd/KernelSU-Next/releases/latest)
-[![Nightly Release](https://img.shields.io/badge/Nightly%20release-gray?logo=hackthebox&logoColor=fff)](https://nightly.link/rifsxd/KernelSU-Next/workflows/build-manager/next/manager)
+[![Latest Release](https://img.shields.io/github/v/release/rifsxd/KernelSU-Next?label=Release&logo=github)](https://github.com/rifsxd/KernelSU-Next/releases/latest)
+[![Nightly Release](https://img.shields.io/badge/Nightly%20Release-gray?logo=hackthebox&logoColor=fff)](https://nightly.link/rifsxd/KernelSU-Next/workflows/build-manager/next/manager)
 [![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2-orange.svg?logo=gnu)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
 [![GitHub License](https://img.shields.io/github/license/rifsxd/KernelSU-Next?logo=gnu)](/LICENSE)
 
 ## 特性
 
-1. 基于内核的 SU 和权限管理
-2. 基于 [Magic Mount](https://github.com/topjohnwu/Magisk/blob/c512496847d182526f2043295ecfd275398eccac/docs/releases/26100.md#new-magic-mount-implementation) 的模块系统
-3. [App Profile](https://kernelsu.org/guide/app-profile.html)：把 Root 权限关进笼子里
+1. 基于内核的 `SU` 和权限管理
+2. 基于动态挂载系统 [Magic Mount](https://topjohnwu.github.io/Magisk/details.html#magic-mount) / [OverlayFS](https://en.wikipedia.org/wiki/OverlayFS) 的模块系统。
+3. [App Profile](https://kernelsu.org/zh_CN/guide/app-profile.html)：把 Root 权限关进笼子里
 
 ## 兼容状态
 
 KernelSU Next 支持从 4.4 到 6.6 的大多数安卓内核
  - GKI 2.0（5.10+）内核可运行预置镜像和 LKM/KMI
  - GKI 1.0（4.19 - 5.4）内核需要使用 KernelSU 内核驱动重新编译
- - EOL (<4.14) 内核也需要使用 KernelSU 内核驱动重新编译 (3.18+ 這是一個實驗版本，可能需要一些功能回溯。)
+ - EOL (<4.14) 内核也需要使用 KernelSU 内核驱动重新编译 (3.18+ 的版本处于试验阶段，可能需要移植一些功能)
 
 目前只支持 `arm64-v8a` 架构
+
+## 用法
+
+- [安装说明](https://rifsxd.github.io/KernelSU-Next/)
 
 ## 安全性
 

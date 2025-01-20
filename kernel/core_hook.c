@@ -45,6 +45,10 @@
 #include "throne_tracker.h"
 #include "kernel_compat.h"
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0) || defined(KSU_COMPAT_GET_CRED_RCU)
+#define KSU_GET_CRED_RCU
+#endif
+
 static bool ksu_module_mounted = false;
 
 extern int handle_sepolicy(unsigned long arg3, void __user *arg4);
@@ -110,16 +114,50 @@ static void setup_groups(struct root_profile *profile, struct cred *cred)
 	set_groups(cred, group_info);
 }
 
+static void disable_seccomp(void)
+{
+	assert_spin_locked(&current->sighand->siglock);
+	// disable seccomp
+#if defined(CONFIG_GENERIC_ENTRY) &&                                           \
+	LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
+	current_thread_info()->syscall_work &= ~SYSCALL_WORK_SECCOMP;
+#else
+	current_thread_info()->flags &= ~(TIF_SECCOMP | _TIF_SECCOMP);
+#endif
+
+#ifdef CONFIG_SECCOMP
+	current->seccomp.mode = 0;
+	current->seccomp.filter = NULL;
+#else
+#endif
+}
+
 void escape_to_root(void)
 {
 	struct cred *cred;
 
+#ifdef KSU_GET_CRED_RCU
+	rcu_read_lock();
+
+	do {
+		cred = (struct cred *)__task_cred((current));
+		BUG_ON(!cred);
+	} while (!get_cred_rcu(cred));
+
+	if (cred->euid.val == 0) {
+		pr_warn("Already root, don't escape!\n");
+		rcu_read_unlock();
+		return;
+	}
+#else
 	cred = (struct cred *)__task_cred(current);
 
 	if (cred->euid.val == 0) {
 		pr_warn("Already root, don't escape!\n");
 		return;
 	}
+#endif
+
 	struct root_profile *profile = ksu_get_root_profile(cred->uid.val);
 
 	cred->uid.val = profile->uid;
@@ -155,21 +193,17 @@ void escape_to_root(void)
 	memset(&cred->cap_ambient, 0,
 			sizeof(cred->cap_ambient));
 
-	// disable seccomp
-#if defined(CONFIG_GENERIC_ENTRY) &&                                           \
-	LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
-	current_thread_info()->syscall_work &= ~SYSCALL_WORK_SECCOMP;
-#else
-	current_thread_info()->flags &= ~(TIF_SECCOMP | _TIF_SECCOMP);
-#endif
-
-#ifdef CONFIG_SECCOMP
-	current->seccomp.mode = 0;
-	current->seccomp.filter = NULL;
-#else
-#endif
-
 	setup_groups(profile, cred);
+	
+#ifdef KSU_GET_CRED_RCU
+	rcu_read_unlock();
+#endif
+
+	// Refer to kernel/seccomp.c: seccomp_set_mode_strict
+	// When disabling Seccomp, ensure that current->sighand->siglock is held during the operation.
+	spin_lock_irq(&current->sighand->siglock);
+	disable_seccomp();
+	spin_unlock_irq(&current->sighand->siglock);
 
 	setup_selinux(profile->selinux_domain);
 }
@@ -634,7 +668,7 @@ static int ksu_task_prctl(int option, unsigned long arg2, unsigned long arg3,
 	return -ENOSYS;
 }
 // kernel 4.4 and 4.9
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0) || defined(CONFIG_IS_HW_HISI)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0) || defined(CONFIG_IS_HW_HISI) || defined(CONFIG_KSU_ALLOWLIST_WORKAROUND)
 static int ksu_key_permission(key_ref_t key_ref, const struct cred *cred,
 			      unsigned perm)
 {
@@ -667,7 +701,7 @@ static struct security_hook_list ksu_hooks[] = {
 	LSM_HOOK_INIT(task_prctl, ksu_task_prctl),
 	LSM_HOOK_INIT(inode_rename, ksu_inode_rename),
 	LSM_HOOK_INIT(task_fix_setuid, ksu_task_fix_setuid),
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0) || defined(CONFIG_IS_HW_HISI)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0) || defined(CONFIG_IS_HW_HISI) || defined(CONFIG_KSU_ALLOWLIST_WORKAROUND)
 	LSM_HOOK_INIT(key_permission, ksu_key_permission)
 #endif
 };

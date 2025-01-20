@@ -1,18 +1,18 @@
-name: Contribute to Unofficially Supported Device
-description: Add your device kernel source to KernelSU's Unofficially Supported Device List
+name: Contribute to Unofficially Supported Devices
+description: Add your device kernel source to KernelSU Next's Unofficially Supported Device List
 title: "[Add Device]: "
 labels: ["add-device"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for supporting KernelSU!
+        Thanks for supporting KernelSU Next!
   - type: input
     id: repo-url
     attributes:
       label: Repository URL
       description: Your repository URL
-      placeholder: https://github.com/tiann/KernelSU
+      placeholder: https://github.com/rifsxd/KernelSU-Next
     validations:
       required: true
   - type: input

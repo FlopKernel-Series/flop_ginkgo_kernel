@@ -18,10 +18,12 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
@@ -41,7 +43,7 @@ import com.rifsxd.ksunext.R
 import com.rifsxd.ksunext.ui.component.rememberConfirmDialog
 import com.rifsxd.ksunext.ui.util.*
 import com.rifsxd.ksunext.ui.util.module.LatestVersionInfo
-import androidx.compose.ui.graphics.vector.ImageVector
+import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>(start = true)
@@ -50,10 +52,14 @@ fun HomeScreen(navigator: DestinationsNavigator) {
     val kernelVersion = getKernelVersion()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior(rememberTopAppBarState())
 
+    val isManager = Natives.becomeManager(ksuApp.packageName)
+    val ksuVersion = if (isManager) Natives.version else null
+
     Scaffold(
         topBar = {
             TopBar(
                 kernelVersion,
+                ksuVersion,
                 onInstallClick = {
                     navigator.navigate(InstallScreenDestination)
                 },
@@ -70,8 +76,6 @@ fun HomeScreen(navigator: DestinationsNavigator) {
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            val isManager = Natives.becomeManager(ksuApp.packageName)
-            val ksuVersion = if (isManager) Natives.version else null
             val lkmMode = ksuVersion?.let {
                 if (it >= Natives.MINIMAL_SUPPORTED_KERNEL_LKM && kernelVersion.isGKI()) Natives.isLkmMode else null
             }
@@ -162,6 +166,7 @@ fun RebootDropdownItem(@StringRes id: Int, reason: String = "") {
 @Composable
 private fun TopBar(
     kernelVersion: KernelVersion,
+    ksuVersion: Int?,
     onInstallClick: () -> Unit,
     scrollBehavior: TopAppBarScrollBehavior? = null
 ) {
@@ -177,36 +182,49 @@ private fun TopBar(
                 }
             }
 
-            var showDropdown by remember { mutableStateOf(false) }
-            IconButton(onClick = {
-                showDropdown = true
-            }) {
-                Icon(
-                    imageVector = Icons.Filled.Refresh,
-                    contentDescription = stringResource(id = R.string.reboot)
-                )
-
-                DropdownMenu(expanded = showDropdown, onDismissRequest = {
-                    showDropdown = false
+            if (ksuVersion != null) {
+                var showDropdown by remember { mutableStateOf(false) }
+                IconButton(onClick = {
+                    showDropdown = true
                 }) {
+                    Icon(
+                        imageVector = Icons.Filled.Refresh,
+                        contentDescription = stringResource(id = R.string.reboot)
+                    )
 
-                    RebootDropdownItem(id = R.string.reboot)
+                    DropdownMenu(expanded = showDropdown, onDismissRequest = {
+                        showDropdown = false
+                    }) {
+                        RebootDropdownItem(id = R.string.reboot)
 
-                    val pm = LocalContext.current.getSystemService(Context.POWER_SERVICE) as PowerManager?
-                    @Suppress("DEPRECATION")
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && pm?.isRebootingUserspaceSupported == true) {
-                        RebootDropdownItem(id = R.string.reboot_userspace, reason = "userspace")
+                        val pm = LocalContext.current.getSystemService(Context.POWER_SERVICE) as PowerManager?
+                        @Suppress("DEPRECATION")
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && pm?.isRebootingUserspaceSupported == true) {
+                            RebootDropdownItem(id = R.string.reboot_userspace, reason = "userspace")
+                        }
+                        RebootDropdownItem(id = R.string.reboot_recovery, reason = "recovery")
+                        RebootDropdownItem(id = R.string.reboot_bootloader, reason = "bootloader")
+                        RebootDropdownItem(id = R.string.reboot_download, reason = "download")
+                        RebootDropdownItem(id = R.string.reboot_edl, reason = "edl")
                     }
-                    RebootDropdownItem(id = R.string.reboot_recovery, reason = "recovery")
-                    RebootDropdownItem(id = R.string.reboot_bootloader, reason = "bootloader")
-                    RebootDropdownItem(id = R.string.reboot_download, reason = "download")
-                    RebootDropdownItem(id = R.string.reboot_edl, reason = "edl")
                 }
             }
         },
         windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
         scrollBehavior = scrollBehavior
     )
+}
+
+@Composable
+fun getSeasonalIcon(): ImageVector {
+    val month = Calendar.getInstance().get(Calendar.MONTH) // 0-11 for January-December
+    return when (month) {
+        Calendar.DECEMBER, Calendar.JANUARY, Calendar.FEBRUARY -> Icons.Filled.AcUnit // Winter
+        Calendar.MARCH, Calendar.APRIL, Calendar.MAY -> Icons.Filled.Spa // Spring
+        Calendar.JUNE, Calendar.JULY, Calendar.AUGUST -> Icons.Filled.WbSunny // Summer
+        Calendar.SEPTEMBER, Calendar.OCTOBER, Calendar.NOVEMBER -> Icons.Filled.Forest // Fall
+        else -> Icons.Filled.Whatshot // Fallback icon
+    }
 }
 
 @Composable
@@ -246,7 +264,10 @@ private fun StatusCard(
                     val workingText =
                         "${stringResource(id = R.string.home_working)}$workingMode$safeMode"
 
-                    Icon(Icons.Filled.AcUnit, stringResource(R.string.home_working))
+                    Icon(
+                        getSeasonalIcon(), // Use dynamic seasonal icon
+                        contentDescription = stringResource(R.string.home_working)
+                    )
                     Column(Modifier.padding(start = 20.dp)) {
                         Text(
                             text = workingText,
@@ -268,14 +289,14 @@ private fun StatusCard(
                             text = stringResource(R.string.home_module_count, getModuleCount()),
                             style = MaterialTheme.typography.bodyMedium
                         )
-                        // Spacer(Modifier.height(4.dp))
-                        // val suSFS = getSuSFS()
-                        // if (suSFS == "Supported") {
-                        //     Text(
-                        //         text = stringResource(R.string.home_susfs, getSuSFS()),
-                        //         style = MaterialTheme.typography.bodyMedium
-                        //     )
-                        // }
+                        Spacer(Modifier.height(4.dp))
+                        val suSFS = getSuSFS()
+                        if (suSFS == "Supported") {
+                            Text(
+                                text = stringResource(R.string.home_susfs, getSuSFS()),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
                     }
                 }
 
@@ -338,6 +359,19 @@ fun WarningCard(
 @Composable
 private fun InfoCard() {
     val context = LocalContext.current
+
+    val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+
+    var useOverlayFs by rememberSaveable {
+        mutableStateOf(prefs.getBoolean("use_overlay_fs", false))
+    }
+
+    val isManager = Natives.becomeManager(ksuApp.packageName)
+    val ksuVersion = if (isManager) Natives.version else null
+
+    LaunchedEffect(Unit) {
+        useOverlayFs = prefs.getBoolean("use_overlay_fs", false)
+    }
 
     ElevatedCard {
         Column(
@@ -413,22 +447,24 @@ private fun InfoCard() {
             Spacer(Modifier.height(16.dp))
             InfoCardItem(
                 label = stringResource(R.string.home_module_mount),
-                content = stringResource(R.string.home_magic_mount),
+                content = when {
+                    ksuVersion == null -> stringResource(R.string.unavailable)
+                    useOverlayFs -> stringResource(R.string.home_overlayfs_mount)
+                    else -> stringResource(R.string.home_magic_mount)
+                },
                 icon = Icons.Filled.SettingsSuggest,
             )
-            
-            // Spacer(Modifier.height(16.dp))
-            // val isSUS_SU = getSuSFSFeatures() == "CONFIG_KSU_SUSFS_SUS_SU"
-            // val suSFS = getSuSFS()
-
-            // if (suSFS == "Supported") {
-            //     val susSUMode = if (isSUS_SU) "| SuS SU mode: ${susfsSUS_SU_Mode()}" else ""
-            //     InfoCardItem(
-            //         label = stringResource(R.string.home_susfs_version),
-            //         content = "${getSuSFSVersion()} (${getSuSFSVariant()}) $susSUMode",
-            //         icon = painterResource(R.drawable.ic_sus),
-            //     )
-            // }
+            Spacer(Modifier.height(16.dp))
+            val isSUS_SU = getSuSFSFeatures() == "CONFIG_KSU_SUSFS_SUS_SU"
+            val suSFS = getSuSFS()
+            if (suSFS == "Supported") {
+                val susSUMode = if (isSUS_SU) "| SuS SU mode: ${susfsSUS_SU_Mode()}" else ""
+                InfoCardItem(
+                    label = stringResource(R.string.home_susfs_version),
+                    content = "${getSuSFSVersion()} (${getSuSFSVariant()}) $susSUMode",
+                    icon = painterResource(R.drawable.ic_sus),
+                )
+            }
         }
     }
 }

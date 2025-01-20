@@ -2,6 +2,7 @@ package com.rifsxd.ksunext.ui.util
 
 import android.content.ContentResolver
 import android.content.Context
+import android.content.Intent
 import android.database.Cursor
 import android.net.Uri
 import android.os.Environment
@@ -22,15 +23,30 @@ import com.rifsxd.ksunext.ksuApp
 import org.json.JSONArray
 import java.io.File
 
-
 /**
  * @author weishu
  * @date 2023/1/1.
  */
 private const val TAG = "KsuCli"
 
-private fun getKsuDaemonPath(): String {
-    return ksuApp.applicationInfo.nativeLibraryDir + File.separator + "libksud.so"
+private fun ksuDaemonMagicPath(): String {
+    return ksuApp.applicationInfo.nativeLibraryDir + File.separator + "libksud_magic.so"
+}
+
+private fun ksuDaemonOverlayfsPath(): String {
+    return ksuApp.applicationInfo.nativeLibraryDir + File.separator + "libksud_overlayfs.so"
+}
+
+// Get the path based on the user's choice
+fun getKsuDaemonPath(): String {
+    val prefs = ksuApp.getSharedPreferences("settings", Context.MODE_PRIVATE)
+    val useOverlayFs = prefs.getBoolean("use_overlay_fs", false)
+    
+    return if (useOverlayFs) {
+        ksuDaemonOverlayfsPath()
+    } else {
+        ksuDaemonMagicPath()
+    }
 }
 
 object KsuCli {
@@ -119,51 +135,6 @@ fun getModuleCount(): Int {
         return array.length()
     }.getOrElse { return 0 }
 }
-
-// private fun getSuSFSDaemonPath(): String {
-//     return ksuApp.applicationInfo.nativeLibraryDir + File.separator + "libsusfsd.so"
-// }
-
-// fun getSuSFS(): String {
-//     val shell = getRootShell()
-//     val result = ShellUtils.fastCmd(shell, "${getSuSFSDaemonPath()} support")
-//     return result
-// }
-
-// fun getSuSFSVersion(): String {
-//     val shell = getRootShell()
-//     val result = ShellUtils.fastCmd(shell, "${getSuSFSDaemonPath()} version")
-//     return result
-// }
-
-// fun getSuSFSVariant(): String {
-//     val shell = getRootShell()
-//     val result = ShellUtils.fastCmd(shell, "${getSuSFSDaemonPath()} variant")
-//     return result
-// }
-// fun getSuSFSFeatures(): String {
-//     val shell = getRootShell()
-//     val result = ShellUtils.fastCmd(shell, "${getSuSFSDaemonPath()} features")
-//     return result
-// }
-
-// fun susfsSUS_SU_0(): String {
-//     val shell = getRootShell()
-//     val result = ShellUtils.fastCmd(shell, "${getSuSFSDaemonPath()} sus_su 0")
-//     return result
-// }
-
-// fun susfsSUS_SU_2(): String {
-//     val shell = getRootShell()
-//     val result = ShellUtils.fastCmd(shell, "${getSuSFSDaemonPath()} sus_su 2")
-//     return result
-// }
-
-// fun susfsSUS_SU_Mode(): String {
-//     val shell = getRootShell()
-//     val result = ShellUtils.fastCmd(shell, "${getSuSFSDaemonPath()} sus_su mode")
-//     return result
-// }
 
 fun getSuperuserCount(): Int {
     return Natives.allowList.size
@@ -403,12 +374,10 @@ suspend fun getSupportedKmis(): List<String> = withContext(Dispatchers.IO) {
     out.filter { it.isNotBlank() }.map { it.trim() }
 }
 
-fun hasDummy(): Boolean {
-//fun overlayFsAvailable(): Boolean {
-    // val shell = getRootShell()
-    // // check /proc/filesystems
-    // return ShellUtils.fastCmdResult(shell, "cat /proc/filesystems | grep overlay")
-    return true
+fun overlayFsAvailable(): Boolean {
+    val shell = getRootShell()
+    // check /proc/filesystems
+    return ShellUtils.fastCmdResult(shell, "cat /proc/filesystems | grep overlay")
 }
 
 fun hasMagisk(): Boolean {
@@ -456,6 +425,127 @@ fun getAppProfileTemplate(id: String): String {
     val shell = getRootShell()
     return shell.newJob().add("${getKsuDaemonPath()} profile get-template '${id}'")
         .to(ArrayList(), null).exec().out.joinToString("\n")
+}
+
+fun getFileName(context: Context, uri: Uri): String {
+    var name = "Unknown Module"
+    if (uri.scheme == ContentResolver.SCHEME_CONTENT) {
+        val cursor: Cursor? = context.contentResolver.query(uri, null, null, null, null)
+        cursor?.use {
+            if (it.moveToFirst()) {
+                name = it.getString(it.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME))
+            }
+        }
+    } else if (uri.scheme == "file") {
+        name = uri.lastPathSegment ?: "Unknown Module"
+    }
+    return name
+}
+
+fun moduleBackupDir(): String? {
+    val shell = getRootShell()
+    val baseBackupDir = "/data/adb/modules_bak"
+    val resultBase = ShellUtils.fastCmd(shell, "mkdir -p $baseBackupDir").trim()
+    if (resultBase.isNotEmpty()) return null
+
+    val timestamp = ShellUtils.fastCmd(shell, "date +%Y%m%d_%H%M%S").trim()
+    if (timestamp.isEmpty()) return null
+
+    val newBackupDir = "$baseBackupDir/$timestamp"
+    val resultNewDir = ShellUtils.fastCmd(shell, "mkdir -p $newBackupDir").trim()
+
+    if (resultNewDir.isEmpty()) return newBackupDir
+    return null
+}
+
+fun moduleBackup(): Boolean {
+    val shell = getRootShell()
+
+    val checkEmptyCommand = "if [ -z \"$(ls -A /data/adb/modules)\" ]; then echo 'empty'; fi"
+    val resultCheckEmpty = ShellUtils.fastCmd(shell, checkEmptyCommand).trim()
+
+    if (resultCheckEmpty == "empty") {
+        return false
+    }
+
+    val backupDir = moduleBackupDir() ?: return false
+    val command = "cp -rp /data/adb/modules/* $backupDir"
+    val result = ShellUtils.fastCmd(shell, command).trim()
+
+    return result.isEmpty()
+}
+
+fun moduleMigration(): Boolean {
+    val shell = getRootShell()
+    val command = "cp -rp /data/adb/modules/* /data/adb/modules_update"
+    val result = ShellUtils.fastCmd(shell, command).trim()
+
+    return result.isEmpty()
+}
+
+fun moduleRestore(): Boolean {
+    val shell = getRootShell()
+
+    val command = "ls -t /data/adb/modules_bak | head -n 1"
+    val latestBackupDir = ShellUtils.fastCmd(shell, command).trim()
+
+    if (latestBackupDir.isEmpty()) return false
+
+    val sourceDir = "/data/adb/modules_bak/$latestBackupDir"
+    val destinationDir = "/data/adb/modules_update"
+
+    val createDestDirCommand = "mkdir -p $destinationDir"
+    ShellUtils.fastCmd(shell, createDestDirCommand)
+
+    val moveCommand = "cp -rp $sourceDir/* $destinationDir"
+    val result = ShellUtils.fastCmd(shell, moveCommand).trim()
+
+    return result.isEmpty()
+}
+
+private fun getSuSFSDaemonPath(): String {
+    return ksuApp.applicationInfo.nativeLibraryDir + File.separator + "libsusfsd.so"
+}
+
+fun getSuSFS(): String {
+    val shell = getRootShell()
+    val result = ShellUtils.fastCmd(shell, "${getSuSFSDaemonPath()} support")
+    return result
+}
+
+fun getSuSFSVersion(): String {
+    val shell = getRootShell()
+    val result = ShellUtils.fastCmd(shell, "${getSuSFSDaemonPath()} version")
+    return result
+}
+
+fun getSuSFSVariant(): String {
+    val shell = getRootShell()
+    val result = ShellUtils.fastCmd(shell, "${getSuSFSDaemonPath()} variant")
+    return result
+}
+fun getSuSFSFeatures(): String {
+    val shell = getRootShell()
+    val result = ShellUtils.fastCmd(shell, "${getSuSFSDaemonPath()} features")
+    return result
+}
+
+fun susfsSUS_SU_0(): String {
+    val shell = getRootShell()
+    val result = ShellUtils.fastCmd(shell, "${getSuSFSDaemonPath()} sus_su 0")
+    return result
+}
+
+fun susfsSUS_SU_2(): String {
+    val shell = getRootShell()
+    val result = ShellUtils.fastCmd(shell, "${getSuSFSDaemonPath()} sus_su 2")
+    return result
+}
+
+fun susfsSUS_SU_Mode(): String {
+    val shell = getRootShell()
+    val result = ShellUtils.fastCmd(shell, "${getSuSFSDaemonPath()} sus_su mode")
+    return result
 }
 
 fun setAppProfileTemplate(id: String, template: String): Boolean {
