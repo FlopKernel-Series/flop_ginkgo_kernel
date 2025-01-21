@@ -61,7 +61,7 @@ OUT_DTBO="out/arch/arm64/boot/dtbo.img"
 ## Customizable vars
 
 # FloppyKernel version
-CK_VER="MS24.1"
+CK_VER="MS24.2"
 
 # Toggles
 USE_CCACHE="1"
