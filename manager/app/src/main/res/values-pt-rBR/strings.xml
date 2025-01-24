@@ -106,7 +106,7 @@
     <string name="profile_selinux_context">Contexto do SELinux</string>
     <string name="profile_umount_modules">Desmontar módulos</string>
     <string name="failed_to_update_app_profile">Falha ao atualizar o Perfil do Aplicativo para %s</string>
-    <string name="require_kernel_version">A versão atual do KernelSU Next %d é muito baixa para o gerenciador funcionar corretamente. Por favor, atualize para a versão %d ou superior!</string>
+    <string name="require_kernel_version">A versão atual do KernelSU Next %1$d é muito baixa para o gerenciador funcionar corretamente. Por favor, atualize para a versão %2$d ou superior!</string>
     <string name="settings_umount_modules_default">Desmontar módulos por padrão</string>
     <string name="settings_umount_modules_default_summary">O valor padrão global para \"Desmontar módulos\" em Perfil do Aplicativo. Se ativado, ele removerá todas as modificações do módulo no sistema para apps que não possuem um perfil definido.</string>
     <string name="settings_susfs_toggle">Ocultar ganchos kprobe</string>

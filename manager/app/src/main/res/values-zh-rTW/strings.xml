@@ -103,7 +103,7 @@
     <string name="profile_selinux_context">SELinux</string>
     <string name="profile_umount_modules">卸載模組</string>
     <string name="failed_to_update_app_profile">為 %s 更新 App Profile 失敗</string>
-    <string name="require_kernel_version">當前 KernelSU-Next 版本 %d 過低，管理器無法正常工作，請升級內核 KernelSU-Next 版本至 %d 或以上！</string>
+    <string name="require_kernel_version">當前 KernelSU-Next 版本 %1$d 過低，管理器無法正常工作，請升級內核 KernelSU-Next 版本至 %2$d 或以上！</string>
     <string name="settings_umount_modules_default">預設卸載模組</string>
     <string name="settings_umount_modules_default_summary">App Profile 中"卸載模組"的全域預設值，如果啟用，將會為沒有設定 Profile 的應用移除所有模組針對系統的修改。</string>
     <string name="settings_susfs_toggle">隱藏kprobe鉤子</string>
