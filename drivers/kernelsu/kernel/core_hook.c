@@ -481,15 +481,11 @@ static bool should_umount(struct path *path)
 		return false;
 	}
 
-#ifdef CONFIG_KSU_SUSFS
-	return susfs_is_mnt_devname_ksu(path);
-#else
 	if (path->mnt && path->mnt->mnt_sb && path->mnt->mnt_sb->s_type) {
 		const char *fstype = path->mnt->mnt_sb->s_type->name;
 		return strcmp(fstype, "overlay") == 0;
 	}
 	return false;
-#endif
 }
 
 static int ksu_umount_mnt(struct path *path, int flags)
