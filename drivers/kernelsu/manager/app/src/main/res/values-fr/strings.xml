@@ -106,7 +106,7 @@
     <string name="profile_selinux_context">Contexte SELinux</string>
     <string name="profile_umount_modules">Démonter les modules</string>
     <string name="failed_to_update_app_profile">Échec de la mise à jour du profil d\'application pour %s</string>
-    <string name="require_kernel_version">La version actuelle de KernelSU next (%d) Est trop ancienne pour que le gestionnaire fonctionne correctement. Merci de mettre à jour vers la version %d ou supérieur!</string>
+    <string name="require_kernel_version">La version actuelle de KernelSU next %1$d Est trop ancienne pour que le gestionnaire fonctionne correctement. Merci de mettre à jour vers la version %2$d ou supérieur!</string>
     <string name="settings_umount_modules_default">Démonter les modules par défaut</string>
     <string name="settings_umount_modules_default_summary">Valeur globale par défaut pour \"Démonter les modules\" Dans le profil d\'application. Si activé, toutes les modifications systèmes effectuées par des modules seront annulées pour les applications n\'ayant pas de profil sélectionné.</string>
     <string name="settings_susfs_toggle">Cacher les hooks kprobe</string>

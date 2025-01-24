@@ -29,7 +29,7 @@
     <string name="selinux_status_enforcing">Zorlanıyor (Enforcing)</string>
     <string name="selinux_status_permissive">Serbest (Permissive)</string>
     <string name="selinux_status_unknown">Bilinmiyor</string>
-    <string name="superuser">Süper Kullanıcı</string>
+    <string name="superuser">Süper kullanıcı</string>
     <string name="module_failed_to_enable">Modül etkinleştirilemedi: %s</string>
     <string name="module_failed_to_disable">Modül devre dışı bırakılamadı: %s</string>
     <string name="module_empty">Yüklü modül yok</string>
@@ -106,7 +106,7 @@
     <string name="profile_selinux_context">SELinux Bağlamı</string>
     <string name="profile_umount_modules">Modüllerin Bağlantısını kes</string>
     <string name="failed_to_update_app_profile">%s için uygulama profili güncellenemedi.</string>
-    <string name="require_kernel_version">Mevcut KernelSU Next sürümü %d, yöneticinin düzgün çalışması için çok düşük. Lütfen sürümü %d veya daha yüksek bir sürüme yükseltin!</string>
+    <string name="require_kernel_version">Mevcut KernelSU Next sürümü %1$d, yöneticinin düzgün çalışması için çok düşük. Lütfen sürümü %2$d veya daha yüksek bir sürüme yükseltin!</string>
     <string name="settings_umount_modules_default">Varsayılan olarak modüllerin bağlantısını kes</string>
     <string name="settings_umount_modules_default_summary">Uygulama profilindeki \"Modüllerin bağlantısını kes\" seçeneği için varsayılan değer. Etkinleştirilirse, profil ayarı yapılmamış uygulamalar için modüllerin sistemde yaptığı tüm değişiklikler kaldırılacaktır.</string>
     <string name="settings_susfs_toggle">Kprobe kancalarını gizle</string>

@@ -106,7 +106,7 @@
     <string name="profile_selinux_context">Контекст SELinux</string>
     <string name="profile_umount_modules">Отключить модули</string>
     <string name="failed_to_update_app_profile">Не удалось обновить Профиль Приложения для %s</string>
-    <string name="require_kernel_version">Текущая версия KernelSU Next %d слишком низкая для корректной работы менеджера. Пожалуйста, обновитесь до версии %d или выше!</string>
+    <string name="require_kernel_version">Текущая версия KernelSU Next %1$d слишком низкая для корректной работы менеджера. Пожалуйста, обновитесь до версии %2$d или выше!</string>
     <string name="settings_umount_modules_default">Отключать модули по умолчанию</string>
     <string name="settings_umount_modules_default_summary">Глобальное значение по умолчанию для \"Отключить модули\" в профиле приложения. Если включено, это удалит все модификации системы модулями для приложений без установленного профиля.</string>
     <string name="settings_susfs_toggle">Скрыть хуки kprobe</string>
@@ -160,8 +160,8 @@
     <string name="install_next">Далее</string>
     <string name="select_file_tip">Рекомендуется образ раздела %1$s</string>
     <string name="select_kmi">Выберите KMI</string>
-    <string name="shrink_sparse_image">Уменьшить разрежённый образ</string>
-    <string name="shrink_sparse_image_message">Измените размер разрежённого образа, в котором находится модуль, до его фактического размера. Обратите внимание, что это может вызвать ненормальную работу модуля, поэтому используйте только при необходимости (например, для резервного копирования).</string>
+    <string name="shrink_sparse_image">Уменьшить modules.img образ</string>
+    <string name="shrink_sparse_image_message">Измените размер modules.img образа, в котором находятся модули, до его фактического размера. Обратите внимание, что это может вызвать ненормальную работу модулей, поэтому используйте только при необходимости (например, для резервного копирования).</string>
     <string name="settings_uninstall">Удаление</string>
     <string name="settings_uninstall_temporary">Временное удаление</string>
     <string name="settings_uninstall_permanent">Полное удаление</string>

@@ -89,7 +89,7 @@
     <string name="profile_selinux_context">SELinux</string>
     <string name="profile_umount_modules">Umount Modul</string>
     <string name="failed_to_update_app_profile">Gagal membarui Profil pada %s</string>
-    <string name="require_kernel_version">Versi KernelSU-Next %d terlalu rendah agar manajer berfungsi normal. Harap membarui ke versi %d atau di atasnya!</string>
+    <string name="require_kernel_version">Versi KernelSU-Next %1$d terlalu rendah agar manajer berfungsi normal. Harap membarui ke versi %2$d atau di atasnya!</string>
     <string name="settings_umount_modules_default">Melepas Modul secara bawaan</string>
     <string name="settings_umount_modules_default_summary">Menggunakan \"Umount Modul\" secara universal pada Profil Aplikasi. Jika diaktifkan, akan menghapus semua modifikasi sistem untuk aplikasi yang tidak memiliki set profil.</string>
     <string name="settings_susfs_toggle">Sembunyikan hook kprobe</string>
