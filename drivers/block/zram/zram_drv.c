@@ -1832,10 +1832,9 @@ static ssize_t disksize_store(struct device *dev,
 	struct zcomp *comp;
 	struct zram *zram = dev_to_zram(dev);
 	int err;
-
-	disksize = memparse(buf, NULL);
-	if (!disksize)
-		return -EINVAL;
+#ifdef CONFIG_ZRAM_AUTO_SIZE
+	u64 total_ram_mib = (totalram_pages() << PAGE_SHIFT) >> 20;
+#endif
 
 	down_write(&zram->init_lock);
 	if (init_done(zram)) {
@@ -1844,13 +1843,24 @@ static ssize_t disksize_store(struct device *dev,
 		goto out_unlock;
 	}
 
-#ifndef CONFIG_ZRAM_SIZE_OVERRIDE
+#if defined(CONFIG_ZRAM_AUTO_SIZE)
+	if (total_ram_mib > 4500) {
+		disksize = (u64)SZ_1G * 6;
+		pr_info("Setting zram size to 6 GiB (RAM: %llu MiB)", total_ram_mib);
+	} else if (total_ram_mib > 3200) {
+		disksize = (u64)SZ_1G * 4;
+		pr_info("Setting zram size to 4 GiB (RAM: %llu MiB)", total_ram_mib);
+	} else {
+		disksize = (u64)SZ_1G * 3;
+		pr_info("Setting zram size to 3 GiB (RAM: %llu MiB)", total_ram_mib);
+	}
+#elif defined(CONFIG_ZRAM_SIZE_OVERRIDE)
+	disksize = (u64)SZ_1 * CONFIG_ZRAM_SIZE_OVERRIDE;
+	pr_info("Overriding zram size to %li", disksize);
+#else
 	disksize = memparse(buf, NULL);
 	if (!disksize)
 		return -EINVAL;
-#else
-	disksize = (u64)SZ_1 * CONFIG_ZRAM_SIZE_OVERRIDE;
-	pr_info("Overriding zram size to %li", disksize);
 #endif
 	if (!zram_meta_alloc(zram, disksize)) {
 		err = -ENOMEM;
