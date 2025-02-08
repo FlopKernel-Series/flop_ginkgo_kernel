@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2010 - 2018 Novatek, Inc.
- * Copyright (C) 2019 XiaoMi, Inc.
+ * Copyright (C) 2021 XiaoMi, Inc.
  *
  * $Revision: 43560 $
  * $Date: 2019-04-19 11:34:19 +0800 (週五, 19 四月 2019) $
@@ -21,6 +21,8 @@
 #include <linux/gpio.h>
 
 #include "nt36xxx.h"
+#include "NVT_firmware_TM.h"
+#include "NVT_firmware_EBBG.h"
 
 #if BOOT_UPDATE_FIRMWARE
 
@@ -37,6 +39,7 @@
 
 struct timeval start, end;
 const struct firmware *fw_entry = NULL;
+struct firmware *request_fw_headfile = NULL;
 static size_t fw_need_write_size = 0;
 static uint8_t *fwbuf = NULL;
 
@@ -285,11 +288,14 @@ return:
 *******************************************************/
 static void update_firmware_release(void)
 {
-	if (fw_entry) {
+	if (!IS_ERR_OR_NULL(request_fw_headfile)) {
+		kfree(request_fw_headfile);
+		request_fw_headfile = NULL;
+		fw_entry = NULL;
+	} else if (!IS_ERR_OR_NULL(fw_entry)) {
 		release_firmware(fw_entry);
+		fw_entry = NULL;
 	}
-
-	fw_entry = NULL;
 }
 
 /*******************************************************
@@ -313,8 +319,32 @@ static int32_t update_firmware_request(char *filename)
 
 		ret = request_firmware(&fw_entry, filename, &ts->client->dev);
 		if (ret) {
-			NVT_ERR("firmware load failed, ret=%d\n", ret);
-			goto request_fail;
+			if (!strcmp(filename, BOOT_UPDATE_TIANMA_FIRMWARE_NAME)) {
+				NVT_LOG("request firmware failed, get from headfile\n");
+				request_fw_headfile = kzalloc(sizeof(struct firmware), GFP_KERNEL);
+				if(request_fw_headfile == NULL) {
+					NVT_LOG("request_fw_headfile kzalloc failed!\n");
+					ret = -1;
+					goto request_fail;
+				}
+				request_fw_headfile->size = sizeof(FIRMWARE_DATA_TM);
+				request_fw_headfile->data = FIRMWARE_DATA_TM;
+				fw_entry = request_fw_headfile;
+			}else if (!strcmp(filename, BOOT_UPDATE_EBBG_FIRMWARE_NAME)) {
+				NVT_LOG("request firmware failed, get from headfile\n");
+				request_fw_headfile = kzalloc(sizeof(struct firmware), GFP_KERNEL);
+				if(request_fw_headfile == NULL) {
+					NVT_LOG("request_fw_headfile kzalloc failed!\n");
+					ret = -1;
+					goto request_fail;
+				}
+				request_fw_headfile->size = sizeof(FIRMWARE_DATA_EBBG);
+				request_fw_headfile->data = FIRMWARE_DATA_EBBG;
+				fw_entry = request_fw_headfile;
+			} else {
+				NVT_ERR("firmware load failed, ret=%d\n", ret);
+				goto request_fail;
+			}
 		}
 
 		// check FW need to write size

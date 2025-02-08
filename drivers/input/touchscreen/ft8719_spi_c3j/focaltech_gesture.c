@@ -3,7 +3,7 @@
  * FocalTech TouchScreen driver.
  *
  * Copyright (c) 2012-2019, Focaltech Ltd. All rights reserved.
- * Copyright (C) 2019 XiaoMi, Inc.
+ * Copyright (C) 2021 XiaoMi, Inc.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -34,10 +34,6 @@
 * 1.Included header files
 *****************************************************************************/
 #include "focaltech_core.h"
-#ifdef CONFIG_TOUCHSCREEN_COMMON
-#include <linux/input/tp_common.h>
-#endif
-
 #if FTS_GESTURE_EN
 /******************************************************************************
 * Private constant and macro definitions using #define
@@ -103,7 +99,31 @@ static bool delay_gesture = false;
 /*****************************************************************************
 * Global variable or extern global variabls/functions
 *****************************************************************************/
+extern void set_lcd_reset_gpio_keep_high(bool en);
 extern int32_t fts_ts_enable_regulator(bool en);
+
+int lct_fts_tp_gesture_callback(bool flag)
+{
+    if (fts_data->suspended && !delay_gesture) {
+        delay_gesture = true;
+        FTS_INFO("The gesture mode will be %s the next time you wakes up.", flag?"enabled":"disabled");
+        return 0;
+    }
+    if (flag) {
+        fts_gesture_data.mode = ENABLE;
+        if (fts_ts_enable_regulator(true) < 0)
+            FTS_ERROR("Failed to enable regulator");
+        //set_lcd_reset_gpio_keep_high(true);
+        FTS_INFO("enable gesture mode");
+    } else {
+        fts_gesture_data.mode = DISABLE;
+        if (fts_ts_enable_regulator(false) < 0)
+            FTS_ERROR("Failed to diable regulator");
+        //set_lcd_reset_gpio_keep_high(false);
+        FTS_INFO("disable gesture mode");
+    }
+    return 0;
+}
 
 bool fts_ts_is_gesture_mode(void)
 {
@@ -138,9 +158,11 @@ static ssize_t fts_gesture_store(
     mutex_lock(&input_dev->mutex);
     if (FTS_SYSFS_ECHO_ON(buf)) {
         FTS_DEBUG("enable gesture");
+        set_lcd_reset_gpio_keep_high(true);
         fts_gesture_data.mode = ENABLE;
     } else if (FTS_SYSFS_ECHO_OFF(buf)) {
         FTS_DEBUG("disable gesture");
+        set_lcd_reset_gpio_keep_high(false);
         fts_gesture_data.mode = DISABLE;
     }
     mutex_unlock(&input_dev->mutex);
@@ -205,33 +227,6 @@ static struct attribute *fts_gesture_mode_attrs[] = {
 static struct attribute_group fts_gesture_group = {
     .attrs = fts_gesture_mode_attrs,
 };
-
-#ifdef CONFIG_TOUCHSCREEN_COMMON
-static ssize_t double_tap_show(struct kobject *kobj,
-                               struct kobj_attribute *attr, char *buf)
-{
-    return sprintf(buf, "%d\n", fts_gesture_data.mode);
-}
-
-static ssize_t double_tap_store(struct kobject *kobj,
-                                struct kobj_attribute *attr, const char *buf,
-                                size_t count)
-{
-    int rc, val;
-    
-    rc = kstrtoint(buf, 10, &val);
-    if (rc)
-    return -EINVAL;
-    
-    fts_gesture_data.mode = !!val;
-    return count;
-}
-
-static struct tp_common_ops double_tap_ops = {
-    .show = double_tap_show,
-    .store = double_tap_store
-};
-#endif
 
 int fts_create_gesture_sysfs(struct device *dev)
 {
@@ -392,6 +387,7 @@ int fts_gesture_suspend(struct fts_ts_data *ts_data)
     u8 state = 0xFF;
 
     FTS_INFO("gesture suspend...");
+    set_lcd_reset_gpio_keep_high(true);
     /* gesture not enable, return immediately */
     if (fts_gesture_data.mode == DISABLE) {
         FTS_INFO("gesture is disabled");
@@ -438,6 +434,7 @@ int fts_gesture_resume(struct fts_ts_data *ts_data)
     /* gesture not enable, return immediately */
     if (fts_gesture_data.mode == DISABLE) {
         if (delay_gesture) {
+            lct_fts_tp_gesture_callback(get_lct_tp_gesture_status());
             delay_gesture = false;
             return 0;
         } else {
@@ -473,6 +470,7 @@ int fts_gesture_resume(struct fts_ts_data *ts_data)
     FTS_INFO("resume from gesture successfully");
 
     if (delay_gesture) {
+        lct_fts_tp_gesture_callback(get_lct_tp_gesture_status());
         delay_gesture = false;
     }
 
@@ -485,20 +483,10 @@ int fts_gesture_switch(struct input_dev *dev, unsigned int type, unsigned int co
 {
     FTS_INFO("Enter. type = %u, code = %u, value = %d", type, code, value);
     if (type == EV_SYN && code == SYN_CONFIG) {
-        if (fts_data->suspended && !delay_gesture) {
-            delay_gesture = true;
-        }
-        if (value == WAKEUP_OFF) {
-            fts_gesture_data.mode = DISABLE;
-            if (fts_ts_enable_regulator(false) < 0)
-                FTS_ERROR("Failed to diable regulator");
-            FTS_INFO("disable gesture mode");
-        } else if (value == WAKEUP_ON) {
-            fts_gesture_data.mode = ENABLE;
-            if (fts_ts_enable_regulator(true) < 0)
-                FTS_ERROR("Failed to enable regulator");
-            FTS_INFO("enable gesture mode");
-        }
+        if (value == WAKEUP_OFF)
+            lct_fts_tp_gesture_callback(false);
+        else if (value == WAKEUP_ON)
+            lct_fts_tp_gesture_callback(true);
     }
     FTS_INFO("Exit");
     return 0;
@@ -507,9 +495,6 @@ int fts_gesture_switch(struct input_dev *dev, unsigned int type, unsigned int co
 int fts_gesture_init(struct fts_ts_data *ts_data)
 {
     struct input_dev *input_dev = ts_data->input_dev;
-#ifdef CONFIG_TOUCHSCREEN_COMMON
-    int ret;
-#endif
 
     FTS_FUNC_ENTER();
 
@@ -547,14 +532,6 @@ int fts_gesture_init(struct fts_ts_data *ts_data)
     __set_bit(KEY_GESTURE_Z, input_dev->keybit);
 
     fts_create_gesture_sysfs(ts_data->dev);
-
-#ifdef CONFIG_TOUCHSCREEN_COMMON
-    ret = tp_common_set_double_tap_ops(&double_tap_ops);
-    if (ret < 0) {
-        FTS_ERROR("%s: Failed to create double_tap node err=%d\n",
-                  __func__, ret);
-    }
-#endif
 
     memset(&fts_gesture_data, 0, sizeof(struct fts_gesture_st));
     fts_gesture_data.mode = DISABLE;
