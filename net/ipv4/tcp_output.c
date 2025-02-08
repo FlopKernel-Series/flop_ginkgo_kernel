@@ -1963,7 +1963,7 @@ static bool tcp_tso_should_defer(struct sock *sk, struct sk_buff *skb,
 
 	head = tcp_write_queue_head(sk);
 
-	age = tcp_stamp_us_delta(tp->tcp_mstamp, head->skb_mstamp);
+	age = tcp_stamp_us_delta(tp->tcp_mstamp, tcp_skb_timestamp_us(head));
 	/* If next ACK is likely to come too late (half srtt), do not defer */
 	if (age < (tp->srtt_us >> 4))
 		goto send_now;

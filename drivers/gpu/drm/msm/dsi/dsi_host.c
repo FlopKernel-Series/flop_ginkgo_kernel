@@ -641,7 +641,7 @@ static int dsi_calc_clk_rate(struct msm_dsi_host *msm_host)
 		return -EINVAL;
 	}
 
-	pclk_rate = mode->clock * 1000;
+	pclk_rate = mode->clock * 1000u;
 	if (lanes > 0) {
 		msm_host->byte_clk_rate = (pclk_rate * bpp) / (8 * lanes);
 	} else {

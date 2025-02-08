@@ -164,10 +164,12 @@ static int stm_drm_platform_probe(struct platform_device *pdev)
 
 	ret = drm_dev_register(ddev, 0);
 	if (ret)
-		goto err_unref;
+		goto err_unload;
 
 	return 0;
 
+err_unload:
+	drv_unload(ddev);
 err_unref:
 	drm_dev_unref(ddev);
 

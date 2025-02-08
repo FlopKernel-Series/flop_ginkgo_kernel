@@ -70,14 +70,15 @@ static void tcp_rack_detect_loss(struct sock *sk, u32 *reo_timeout)
 		    scb->sacked & TCPCB_SACKED_ACKED)
 			continue;
 
-		if (tcp_rack_sent_after(tp->rack.mstamp, skb->skb_mstamp,
+		if (tcp_rack_sent_after(tp->rack.mstamp,
+					tcp_skb_timestamp_us(skb),
 					tp->rack.end_seq, scb->end_seq)) {
 			/* Step 3 in draft-cheng-tcpm-rack-00.txt:
 			 * A packet is lost if its elapsed time is beyond
 			 * the recent RTT plus the reordering window.
 			 */
 			u32 elapsed = tcp_stamp_us_delta(tp->tcp_mstamp,
-							 skb->skb_mstamp);
+							 tcp_skb_timestamp_us(skb));
 			s32 remaining = tp->rack.rtt_us + reo_wnd - elapsed;
 
 			if (remaining < 0) {

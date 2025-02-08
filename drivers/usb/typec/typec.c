@@ -371,6 +371,7 @@ static void typec_altmode_release(struct device *dev)
 
 	for (i = 0; i < alt->n_modes; i++)
 		kfree(alt->modes[i].desc);
+	put_device(alt->dev.parent)
 	kfree(alt);
 }
 
@@ -399,6 +400,8 @@ typec_register_altmode(struct device *parent,
 	alt->dev.groups = alt->mode_groups;
 	alt->dev.type = &typec_altmode_dev_type;
 	dev_set_name(&alt->dev, "svid-%04x", alt->svid);
+
+	get_device(alt->dev.parent);
 
 	ret = device_register(&alt->dev);
 	if (ret) {
