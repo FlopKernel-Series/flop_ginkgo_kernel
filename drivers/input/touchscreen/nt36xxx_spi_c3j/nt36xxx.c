@@ -1952,7 +1952,7 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 #ifdef _MSM_DRM_NOTIFY_H_
 	ts->drm_notif.notifier_call = nvt_drm_notifier_callback;
 	if ((strnstr(saved_command_line,"tianma",strlen(saved_command_line)) != NULL) || (strnstr(saved_command_line,"shenchao",strlen(saved_command_line)) != NULL)){
-		ret = drm_register_client(&ts->drm_notif);
+		ret = msm_drm_register_client(&ts->drm_notif);
 	}else{
 		ret = msm_drm_register_client(&ts->drm_notif);
 	}
@@ -2001,7 +2001,7 @@ err_create_nvt_ts_workqueue_failed:
 		destroy_workqueue(ts->workqueue);
 #ifdef _MSM_DRM_NOTIFY_H_
 	if ((strnstr(saved_command_line,"tianma",strlen(saved_command_line)) != NULL) || (strnstr(saved_command_line,"shenchao",strlen(saved_command_line)) != NULL)){
-		if (drm_unregister_client(&ts->drm_notif))
+		if (msm_drm_unregister_client(&ts->drm_notif))
 			NVT_ERR("Error occurred while unregistering drm_notifier.\n");
 	} else {
 		if (msm_drm_unregister_client(&ts->drm_notif))
@@ -2102,7 +2102,7 @@ static int32_t nvt_ts_remove(struct spi_device *client)
 		destroy_workqueue(ts->workqueue);
 #ifdef _MSM_DRM_NOTIFY_H_
 	if ((strnstr(saved_command_line,"tianma",strlen(saved_command_line)) != NULL) || (strnstr(saved_command_line,"shenchao",strlen(saved_command_line)) != NULL)) {
-		if (drm_unregister_client(&ts->drm_notif))
+		if (msm_drm_unregister_client(&ts->drm_notif))
 			NVT_ERR("Error occurred while unregistering drm_notifier.\n");
 	}else{
 		if (msm_drm_unregister_client(&ts->drm_notif))
@@ -2190,7 +2190,7 @@ static void nvt_ts_shutdown(struct spi_device *client)
 		destroy_workqueue(ts->workqueue);
 #ifdef _MSM_DRM_NOTIFY_H_
 	if ((strnstr(saved_command_line,"tianma",strlen(saved_command_line)) != NULL) || (strnstr(saved_command_line,"shenchao",strlen(saved_command_line)) != NULL)){
-		if (drm_unregister_client(&ts->drm_notif))
+		if (msm_drm_unregister_client(&ts->drm_notif))
 			NVT_ERR("Error occurred while unregistering drm_notifier.\n");
 	} else {
 		if (msm_drm_unregister_client(&ts->drm_notif))
@@ -2412,14 +2412,14 @@ static int nvt_drm_notifier_callback(struct notifier_block *self, unsigned long 
 	if ((strnstr(saved_command_line,"tianma",strlen(saved_command_line)) != NULL) || (strnstr(saved_command_line,"shenchao",strlen(saved_command_line)) != NULL)) {
 	if (evdata->data && ts) {
 		blank = evdata->data;
-		if (event == DRM_EARLY_EVENT_BLANK) {
-			if (*blank == DRM_BLANK_POWERDOWN) {
+		if (event == MSM_DRM_EARLY_EVENT_BLANK) {
+			if (*blank == MSM_DRM_BLANK_POWERDOWN) {
 				NVT_LOG("event=%lu, *blank=%d\n", event, *blank);
 				cancel_work_sync(&ts->resume_work);
 				nvt_ts_suspend(&ts->client->dev);
 			}
-		} else if (event == DRM_EVENT_BLANK) {
-			if (*blank == DRM_BLANK_UNBLANK) {
+		} else if (event == MSM_DRM_EVENT_BLANK) {
+			if (*blank == MSM_DRM_BLANK_UNBLANK) {
 				NVT_LOG("event=%lu, *blank=%d\n", event, *blank);
 				//nvt_ts_resume(&ts->client->dev);
 				queue_work(ts->workqueue, &ts->resume_work);
