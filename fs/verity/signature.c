@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Verification of builtin signatures
+ * fs/verity/signature.c: verification of builtin signatures
  *
  * Copyright 2019 Google LLC
  */
@@ -29,20 +29,22 @@ static struct key *fsverity_keyring;
 /**
  * fsverity_verify_signature() - check a verity file's signature
  * @vi: the file's fsverity_info
- * @signature: the file's built-in signature
- * @sig_size: size of signature in bytes, or 0 if no signature
+ * @desc: the file's fsverity_descriptor
+ * @desc_size: size of @desc
  *
- * If the file includes a signature of its fs-verity file digest, verify it
- * against the certificates in the fs-verity keyring.
+ * If the file's fs-verity descriptor includes a signature of the file
+ * measurement, verify it against the certificates in the fs-verity keyring.
  *
  * Return: 0 on success (signature valid or not required); -errno on failure
  */
 int fsverity_verify_signature(const struct fsverity_info *vi,
-			      const u8 *signature, size_t sig_size)
+			      const struct fsverity_descriptor *desc,
+			      size_t desc_size)
 {
 	const struct inode *inode = vi->inode;
 	const struct fsverity_hash_alg *hash_alg = vi->tree_params.hash_alg;
-	struct fsverity_formatted_digest *d;
+	const u32 sig_size = le32_to_cpu(desc->sig_size);
+	struct fsverity_signed_digest *d;
 	int err;
 
 	if (sig_size == 0) {
@@ -54,16 +56,38 @@ int fsverity_verify_signature(const struct fsverity_info *vi,
 		return 0;
 	}
 
+	if (sig_size > desc_size - sizeof(*desc)) {
+		fsverity_err(inode, "Signature overflows verity descriptor");
+		return -EBADMSG;
+	}
+
+	if (fsverity_keyring->keys.nr_leaves_on_tree == 0) {
+		/*
+		 * The ".fs-verity" keyring is empty, due to builtin signatures
+		 * being supported by the kernel but not actually being used.
+		 * In this case, verify_pkcs7_signature() would always return an
+		 * error, usually ENOKEY.  It could also be EBADMSG if the
+		 * PKCS#7 is malformed, but that isn't very important to
+		 * distinguish.  So, just skip to ENOKEY to avoid the attack
+		 * surface of the PKCS#7 parser, which would otherwise be
+		 * reachable by any task able to execute FS_IOC_ENABLE_VERITY.
+		 */
+		fsverity_err(inode,
+			     "fs-verity keyring is empty, rejecting signed file!");
+		return -ENOKEY;
+	}
+
 	d = kzalloc(sizeof(*d) + hash_alg->digest_size, GFP_KERNEL);
 	if (!d)
 		return -ENOMEM;
 	memcpy(d->magic, "FSVerity", 8);
 	d->digest_algorithm = cpu_to_le16(hash_alg - fsverity_hash_algs);
 	d->digest_size = cpu_to_le16(hash_alg->digest_size);
-	memcpy(d->digest, vi->file_digest, hash_alg->digest_size);
+	memcpy(d->digest, vi->measurement, hash_alg->digest_size);
 
 	err = verify_pkcs7_signature(d, sizeof(*d) + hash_alg->digest_size,
-				     signature, sig_size, fsverity_keyring,
+				     desc->signature, sig_size,
+				     fsverity_keyring,
 				     VERIFYING_UNSPECIFIED_SIGNATURE,
 				     NULL, NULL);
 	kfree(d);
@@ -82,8 +106,8 @@ int fsverity_verify_signature(const struct fsverity_info *vi,
 		return err;
 	}
 
-	pr_debug("Valid signature for file digest %s:%*phN\n",
-		 hash_alg->name, hash_alg->digest_size, vi->file_digest);
+	pr_debug("Valid signature for file measurement %s:%*phN\n",
+		 hash_alg->name, hash_alg->digest_size, vi->measurement);
 	return 0;
 }
 
