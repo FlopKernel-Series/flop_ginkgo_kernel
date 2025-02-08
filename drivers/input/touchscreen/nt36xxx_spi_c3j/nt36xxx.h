@@ -162,6 +162,7 @@ struct nvt_ts_data {
 	struct mutex xbuf_lock;
 	bool irq_enabled;
 	struct pm_qos_request pm_spi_req;
+	struct pm_qos_request pm_touch_req;
 #if WAKEUP_GESTURE
 	bool delay_gesture;
 	bool is_gesture_mode;

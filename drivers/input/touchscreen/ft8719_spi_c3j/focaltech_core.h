@@ -164,6 +164,7 @@ struct fts_ts_data {
     struct mutex report_mutex;
     struct mutex bus_lock;
     struct pm_qos_request pm_spi_req;
+    struct pm_qos_request pm_touch_req;
     int irq;
     int log_level;
     int fw_is_running;      /* confirm fw is running when using spi:default 0 */
