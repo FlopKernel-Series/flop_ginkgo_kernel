@@ -77,6 +77,7 @@
 #include <linux/falloc.h>
 #include <linux/uio.h>
 #include <linux/ioprio.h>
+#include <linux/delay.h>
 
 #include "loop.h"
 
@@ -1077,10 +1078,16 @@ static int loop_clr_fd(struct loop_device *lo)
 	lo->lo_state = Lo_unbound;
 	/* This is safe: open() is still holding a reference. */
 	module_put(THIS_MODULE);
-	blk_mq_unfreeze_queue(lo->lo_queue);
 
 	if (lo->lo_flags & LO_FLAGS_PARTSCAN && bdev)
 		loop_reread_partitions(lo, bdev);
+
+	/* Ensure all references are dropped before unfreezing */
+	while (!percpu_ref_is_zero(&lo->lo_queue->q_usage_counter))
+		msleep(10);
+
+	blk_mq_unfreeze_queue(lo->lo_queue);
+
 	lo->lo_flags = 0;
 	if (!part_shift)
 		lo->lo_disk->flags |= GENHD_FL_NO_PART_SCAN;
