@@ -5,11 +5,11 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
 
+use anyhow::Context;
+use anyhow::Result;
 use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::ensure;
-use anyhow::Context;
-use anyhow::Result;
 use regex_lite::Regex;
 use which::which;
 
@@ -74,7 +74,7 @@ fn parse_kmi_from_modules() -> Result<String> {
     // find a *.ko in /vendor/lib/modules
     let modfile = std::fs::read_dir("/vendor/lib/modules")?
         .filter_map(Result::ok)
-        .find(|entry| entry.path().extension().map_or(false, |ext| ext == "ko"))
+        .find(|entry| entry.path().extension().is_some_and(|ext| ext == "ko"))
         .map(|entry| entry.path())
         .ok_or_else(|| anyhow!("No kernel module found"))?;
     let output = Command::new("modinfo").arg(modfile).output()?;
@@ -97,7 +97,7 @@ pub fn get_current_kmi() -> Result<String> {
 }
 
 fn parse_kmi_from_kernel(kernel: &PathBuf, workdir: &Path) -> Result<String> {
-    use std::fs::{copy, File};
+    use std::fs::{File, copy};
     use std::io::{BufReader, Read};
     let kernel_path = workdir.join("kernel");
     copy(kernel, &kernel_path).context("Failed to copy kernel")?;
@@ -235,7 +235,10 @@ pub fn restore(
     ensure!(status.success(), "magiskboot unpack failed");
 
     let is_kernelsu_patched = is_kernelsu_patched(&magiskboot, workdir)?;
-    ensure!(is_kernelsu_patched, "boot image is not patched by KernelSU Next");
+    ensure!(
+        is_kernelsu_patched,
+        "boot image is not patched by KernelSU Next"
+    );
 
     let mut new_boot = None;
     let mut from_backup = false;

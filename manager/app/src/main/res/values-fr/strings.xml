@@ -5,7 +5,7 @@
     <string name="issue_report_body_2">Signalez-le dès que possible !</string>
     <string name="issue_report_github">Signaler sur GitHub</string>
     <string name="issue_report_telegram">Contacter via Telegram</string>
-    <string name="issue_report_github_link">https://github.com/rifsxd/KernelSU-Next/issues</string>
+    <string name="issue_report_github_link">https://github.com/KernelSU-Next/KernelSU-Next/issues</string>
     <string name="issue_report_telegram_link">https://t.me/ksunext</string>
     <string name="confirm">Confirmer</string>
     <string name="app_name" translatable="false">KernelSU Next</string>
@@ -26,7 +26,7 @@
     <string name="home_manager_version">Version du manager</string>
     <string name="home_selinux_status">Statut SELinux</string>
     <string name="selinux_status_disabled">Désactivé</string>
-    <string name="selinux_status_enforcing">En vigueur</string>
+    <string name="selinux_status_enforcing">Appliqué</string>
     <string name="selinux_status_permissive">Permissif</string>
     <string name="selinux_status_unknown">Inconnu</string>
     <string name="superuser">SuperUtilisateur</string>
@@ -43,7 +43,7 @@
     <string name="install">Installer</string>
     <string name="reboot">Redémarrer</string>
     <string name="settings">Paramètres</string>
-    <string name="reboot_userspace">Redémarrage léger</string>
+    <string name="reboot_userspace">Redémarrage logiciel</string>
     <string name="reboot_recovery">Redémarrer en mode Recovery</string>
     <string name="reboot_bootloader">Redémarrer en mode Bootloader</string>
     <string name="reboot_download">Redémarrer sur les Téléchargements</string>
@@ -62,14 +62,14 @@
     <string name="show_system_apps">Montrer les apps système</string>
     <string name="hide_system_apps">Cacher les apps système</string>
     <string name="export_log">Exporter les logs</string>
-    <string name="safe_mode">Mode sécurité</string>
+    <string name="safe_mode">Mode sécurisé</string>
     <string name="reboot_to_apply">Redémarrer pour appliquer les changements</string>
     <string name="module_magisk_conflict">Les modules sont indisponibles en raison d\'un conflit avec Magisk!</string>
-    <string name="home_module_mount">Module système</string>
+    <string name="home_module_mount">Système de module</string>
     <string name="home_magic_mount">Magic Mount</string>
     <string name="home_overlayfs_mount">OverlayFS</string>
     <string name="unavailable">Indisponible</string>
-    <string name="use_overlay_fs">Utiliser OverlayFS (Beta)</string>
+    <string name="use_overlay_fs">Utiliser OverlayFS</string>
     <string name="use_overlay_fs_summary">Alterner entre l\’utilisation d’OverlayFS et de Magic Mount pour le système de montage de KernelSU Next.</string>
     <string name="reboot_required">Redémarrage requis</string>
     <string name="reboot_message">Les changements ne seront effectifs qu\'après un redémarrage. Voulez-vous redémarrer maintenant?</string>
@@ -83,7 +83,7 @@
     <string name="cancel">Annuler</string>
     <string name="later">Plus tard</string>
     <string name="home_next_kernelsu">🔥 Next build</string>
-    <string name="home_next_kernelsu_repo">https://github.com/rifsxd/KernelSU-Next</string>
+    <string name="home_next_kernelsu_repo">https://github.com/KernelSU-Next/KernelSU-Next</string>
     <string name="home_next_kernelsu_body">Branche expérimentale Next. Allez la voir sur Github!</string>
     <string name="home_experimental_kernelsu">⚠️ Attention, développement expérimental!</string>
     <string name="home_experimental_kernelsu_repo">127.0.0.1</string>
@@ -106,12 +106,12 @@
     <string name="profile_selinux_context">Contexte SELinux</string>
     <string name="profile_umount_modules">Démonter les modules</string>
     <string name="failed_to_update_app_profile">Échec de la mise à jour du profil d\'application pour %s</string>
-    <string name="require_kernel_version">La version actuelle de KernelSU next %1$d Est trop ancienne pour que le gestionnaire fonctionne correctement. Merci de mettre à jour vers la version %2$d ou supérieur!</string>
+    <string name="require_kernel_version">La version actuelle de KernelSU Next %1$d Est trop ancienne pour que le gestionnaire fonctionne correctement. Merci de mettre à jour vers la version %2$d ou supérieur!</string>
     <string name="settings_umount_modules_default">Démonter les modules par défaut</string>
     <string name="settings_umount_modules_default_summary">Valeur globale par défaut pour \"Démonter les modules\" Dans le profil d\'application. Si activé, toutes les modifications systèmes effectuées par des modules seront annulées pour les applications n\'ayant pas de profil sélectionné.</string>
     <string name="settings_susfs_toggle">Cacher les hooks kprobe</string>
-    <string name="settings_susfs_toggle_summary">Désactive les hooks kprobe créés par KSU et, à la place, active les hooks non-kprobe intégrés, implémentant les mêmes fonctionnalités qui seraient appliquées à un kernel non-GKI, qui ne supportent krpobe.</string>
-    <string name="profile_umount_modules_summary">Activer cette option permettra à KernelSU Next de restaurer n\'importe quel fichier modifié par les modules pour cette app.</string>
+    <string name="settings_susfs_toggle_summary">Désactive les hooks kprobe créés par KSU et, à la place, active les hooks non-kprobe intégrés, implémentant les mêmes fonctionnalités qui seraient appliquées à un kernel non-GKI, qui ne supportent pas les kprobes.</string>
+    <string name="profile_umount_modules_summary">Activer cette option permettra à KernelSU Next de restaurer n\'importe quel fichier modifié par les modules pour cette application.</string>
     <string name="profile_selinux_domain">Domaine</string>
     <string name="profile_selinux_rules">Règles</string>
     <string name="module_update">Mise à jour</string>
@@ -151,8 +151,8 @@
     <string name="grant_root_failed">Échec de l\'accord du statut root!</string>
     <string name="action">Action</string>
     <string name="open">Ouvrir</string>
-    <string name="enable_web_debugging">Activer le débuggage WebView</string>
-    <string name="enable_web_debugging_summary">Peut être utilisé pour débug la WebUI. Merci de ne l\'activer qu\'en cas de nécéssité.</string>
+    <string name="enable_web_debugging">Activer le débogage de WebView</string>
+    <string name="enable_web_debugging_summary">Peut être utilisé pour déboguer la WebUI. Merci de ne l\'activer qu\'en cas de nécéssité.</string>
     <string name="direct_install">Installation directe (recommandé)</string>
     <string name="select_file">Sélectionner un fichier</string>
     <string name="install_inactive_slot">Installer sur un slot inactif (après OTA)</string>
@@ -161,12 +161,12 @@
     <string name="select_file_tip">%1$s Partitionner l\'image est recommandé.</string>
     <string name="select_kmi">Sélectionner le KMI</string>
     <string name="shrink_sparse_image">Minimiser l\'espace disponible réservé</string>
-    <string name="shrink_sparse_image_message">Redimensionne l\'image où se trouve le module à sa taille réelle. Notez que cela peut entraîner un fonctionnement anormal du module. Veuillez donc l\'utiliser uniquement en cas de nécessité (par exemple, pour une sauvegarde).</string>
+    <string name="shrink_sparse_image_message">Redimensionne l\'image où se trouve le module à sa taille réelle. Notez que cela peut entraîner un fonctionnement anormal des modules. Veuillez donc l\'utiliser uniquement en cas de nécessité (par exemple, pour une sauvegarde).</string>
     <string name="settings_uninstall">Désinstaller</string>
     <string name="settings_uninstall_temporary">Désinstaller temporairement</string>
     <string name="settings_uninstall_permanent">Désinstaller de façon permanente</string>
     <string name="settings_restore_stock_image">Restaurer l\'image stock</string>
-    <string name="settings_uninstall_temporary_message">Déinsnstalle temporairement KernelSU Next, qui sera restauré au prochain redémarrage.</string>
+    <string name="settings_uninstall_temporary_message">Désinstalle temporairement KernelSU Next, qui sera restauré au prochain redémarrage.</string>
     <string name="settings_uninstall_permanent_message">Désinstallation de KernelSU Next (Root et les modules) complètement et de façon définitive.</string>
     <string name="settings_restore_stock_image_message">Restaure l\'image stock (si une sauvegarde existe), habituellement utilisée avant une mise à jour OTA; Si vous avez besoin de désinstaller KernelSU Next, Merci de sélectionner \"Désinstaller de façon permanente\".</string>
     <string name="flashing">En cours de flash...</string>
