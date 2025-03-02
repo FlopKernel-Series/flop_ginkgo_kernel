@@ -1232,13 +1232,10 @@ struct drm_gem_object *omap_gem_new_dmabuf(struct drm_device *dev, size_t size,
 	if (sgt->orig_nents != 1 && !priv->has_dmm)
 		return ERR_PTR(-EINVAL);
 
-	mutex_lock(&dev->struct_mutex);
-
 	gsize.bytes = PAGE_ALIGN(size);
 	obj = omap_gem_new(dev, gsize, OMAP_BO_MEM_DMABUF | OMAP_BO_WC);
 	if (!obj) {
-		obj = ERR_PTR(-ENOMEM);
-		goto done;
+		return ERR_PTR(-ENOMEM);
 	}
 
 	omap_obj = to_omap_bo(obj);
@@ -1257,8 +1254,7 @@ struct drm_gem_object *omap_gem_new_dmabuf(struct drm_device *dev, size_t size,
 		pages = kcalloc(npages, sizeof(*pages), GFP_KERNEL);
 		if (!pages) {
 			omap_gem_free_object(obj);
-			obj = ERR_PTR(-ENOMEM);
-			goto done;
+			return ERR_PTR(-ENOMEM);
 		}
 
 		omap_obj->pages = pages;
@@ -1271,13 +1267,10 @@ struct drm_gem_object *omap_gem_new_dmabuf(struct drm_device *dev, size_t size,
 
 		if (WARN_ON(i != npages)) {
 			omap_gem_free_object(obj);
-			obj = ERR_PTR(-ENOMEM);
-			goto done;
+			return ERR_PTR(-ENOMEM);
 		}
 	}
 
-done:
-	mutex_unlock(&dev->struct_mutex);
 	return obj;
 }
 
