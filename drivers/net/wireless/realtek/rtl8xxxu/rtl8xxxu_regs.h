@@ -1,14 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2014 - 2017 Jes Sorensen <Jes.Sorensen@gmail.com>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
- * more details.
  *
  * Register definitions taken from original Realtek rtl8723au driver
  */
@@ -143,6 +135,7 @@
 #define REG_CAL_TIMER			0x003c
 #define REG_ACLK_MON			0x003e
 #define REG_GPIO_MUXCFG			0x0040
+#define  GPIO_MUXCFG_IO_SEL_ENBT	BIT(5)
 #define REG_GPIO_IO_SEL			0x0042
 #define REG_MAC_PINMUX_CFG		0x0043
 #define REG_GPIO_PIN_CTRL		0x0044
@@ -377,6 +370,11 @@
 #define  PBP_PAGE_SIZE_512		0x3
 #define  PBP_PAGE_SIZE_1024		0x4
 
+/* 8188eu IOL magic */
+#define REG_PKT_BUF_ACCESS_CTRL		0x0106
+#define  PKT_BUF_ACCESS_CTRL_TX		0x69
+#define  PKT_BUF_ACCESS_CTRL_RX		0xa5
+
 #define REG_TRXDMA_CTRL			0x010c
 #define  TRXDMA_CTRL_RXDMA_AGG_EN	BIT(2)
 #define  TRXDMA_CTRL_VOQ_SHIFT		4
@@ -412,6 +410,8 @@
 #define REG_MBIST_START			0x0174
 #define REG_MBIST_DONE			0x0178
 #define REG_MBIST_FAIL			0x017c
+/* 8188EU */
+#define REG_32K_CTRL			0x0194
 #define REG_C2HEVT_MSG_NORMAL		0x01a0
 /* 8192EU/8723BU/8812 */
 #define REG_C2HEVT_CMD_ID_8723B		0x01ae
@@ -431,7 +431,7 @@
 #define  LLT_OP_READ			(0x2 << 30)
 #define  LLT_OP_MASK			(0x3 << 30)
 
-#define REG_BB_ACCEESS_CTRL		0x01e8
+#define REG_BB_ACCESS_CTRL		0x01e8
 #define REG_BB_ACCESS_DATA		0x01ec
 
 #define REG_HMBOX_EXT0_8723B		0x01f0
@@ -524,6 +524,8 @@
 #define REG_RESPONSE_RATE_SET		0x0440
 #define  RESPONSE_RATE_BITMAP_ALL	0xfffff
 #define  RESPONSE_RATE_RRSR_CCK_ONLY_1M	0xffff1
+#define  RESPONSE_RATE_RRSR_INIT_2G	0x15f
+#define  RESPONSE_RATE_RRSR_INIT_5G	0x150
 #define  RSR_1M				BIT(0)
 #define  RSR_2M				BIT(1)
 #define  RSR_5_5M			BIT(2)
@@ -937,6 +939,16 @@
 #define REG_FPGA1_RF_MODE		0x0900
 
 #define REG_FPGA1_TX_INFO		0x090c
+#define  FPGA1_TX_ANT_MASK		0x0000000f
+#define  FPGA1_TX_ANT_L_MASK		0x000000f0
+#define  FPGA1_TX_ANT_NON_HT_MASK	0x00000f00
+#define  FPGA1_TX_ANT_HT1_MASK		0x0000f000
+#define  FPGA1_TX_ANT_HT2_MASK		0x000f0000
+#define  FPGA1_TX_ANT_HT_S1_MASK	0x00f00000
+#define  FPGA1_TX_ANT_NON_HT_S1_MASK	0x0f000000
+#define  FPGA1_TX_OFDM_TXSC_MASK	0x30000000
+
+#define REG_ANT_MAPPING1		0x0914
 #define REG_DPDT_CTRL			0x092c	/* 8723BU */
 #define REG_RFE_CTRL_ANTA_SRC		0x0930	/* 8723BU */
 #define REG_RFE_PATH_SELECT		0x0940	/* 8723BU */
@@ -948,9 +960,25 @@
 
 #define REG_CCK0_AFE_SETTING		0x0a04
 #define  CCK0_AFE_RX_MASK		0x0f000000
-#define  CCK0_AFE_RX_ANT_AB		BIT(24)
+#define  CCK0_AFE_TX_MASK		0xf0000000
 #define  CCK0_AFE_RX_ANT_A		0
-#define  CCK0_AFE_RX_ANT_B		(BIT(24) | BIT(26))
+#define  CCK0_AFE_RX_ANT_B		BIT(26)
+#define  CCK0_AFE_RX_ANT_C		BIT(27)
+#define  CCK0_AFE_RX_ANT_D		(BIT(26) | BIT(27))
+#define  CCK0_AFE_RX_ANT_OPTION_A	0
+#define  CCK0_AFE_RX_ANT_OPTION_B	BIT(24)
+#define  CCK0_AFE_RX_ANT_OPTION_C	BIT(25)
+#define  CCK0_AFE_RX_ANT_OPTION_D	(BIT(24) | BIT(25))
+#define  CCK0_AFE_TX_ANT_A		BIT(31)
+#define  CCK0_AFE_TX_ANT_B		BIT(30)
+
+#define REG_CCK_ANTDIV_PARA2		0x0a04
+#define REG_BB_POWER_SAVE4		0x0a74
+
+/* 8188eu */
+#define REG_LNA_SWITCH			0x0b2c
+#define  LNA_SWITCH_DISABLE_CSCG	BIT(22)
+#define  LNA_SWITCH_OUTPUT_CG		BIT(31)
 
 #define REG_CONFIG_ANT_A		0x0b68
 #define REG_CONFIG_ANT_B		0x0b6c
@@ -1002,6 +1030,9 @@
 #define REG_OFDM0_XD_TX_AFE		0x0c9c
 
 #define REG_OFDM0_RX_IQ_EXT_ANTA	0x0ca0
+
+/* 8188eu */
+#define REG_ANTDIV_PARA1		0x0ca4
 
 /* 8723bu */
 #define REG_OFDM0_TX_PSDO_NOISE_WEIGHT	0x0ce4

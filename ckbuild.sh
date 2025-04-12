@@ -131,7 +131,7 @@ done
 
 DEFCONFIG="$DEFAULT_DEFCONFIG"
 if [[ "$DO_KSU" == "1" ]]; then
-    DEFCONFIG="ximi-winkgo-ksu_defconfig"
+    DEFCONFIG="nethunter_defconfig"
 else
     DEFCONFIG="ximi-winkgo_defconfig"
 fi

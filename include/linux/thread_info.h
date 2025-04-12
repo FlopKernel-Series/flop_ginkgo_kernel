@@ -151,6 +151,11 @@ static __always_inline bool
 check_copy_size(const void *addr, size_t bytes, bool is_source)
 {
 	int sz = __compiletime_object_size(addr);
+
+	/* constant propagation doesn't work well with -Og */
+	if (IS_ENABLED(CONFIG_CC_OPTIMIZE_FOR_DEBUGGING))
+		return true;
+
 	if (unlikely(sz >= 0 && sz < bytes)) {
 		if (!__builtin_constant_p(bytes))
 			copy_overflow(sz, bytes);
