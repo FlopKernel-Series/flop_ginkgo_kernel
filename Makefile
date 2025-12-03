@@ -725,9 +725,9 @@ KBUILD_CFLAGS	+= $(call cc-disable-warning, attribute-alias)
 ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
 KBUILD_CFLAGS   += -Os
 else
-KBUILD_CFLAGS   += -O2
+KBUILD_CFLAGS   += -O3
 ifeq ($(cc-name),clang)
-KBUILD_CFLAGS	+= -mcpu=cortex-a53 -mtune=cortex-a53
+KBUILD_CFLAGS	+= -mcpu=cortex-a73 -mtune=cortex-a73
 
 ifdef CONFIG_LLVM_POLLY
 KBUILD_CFLAGS	+= -mllvm -polly \
@@ -739,9 +739,6 @@ KBUILD_CFLAGS	+= -mllvm -polly \
 		   -mllvm -polly-invariant-load-hoisting
 endif
 endif
-endif
-ifdef CONFIG_LTO_CLANG
-KBUILD_CFLAG	+= -fwhole-program-vtables
 endif
 
 # Tell gcc to never replace conditional load with a non-conditional one
@@ -916,7 +913,13 @@ ifdef CONFIG_THINLTO
 lto-clang-flags	:= -flto=thin -fsplit-lto-unit $(call cc-option,-funified-lto)
 
 # LLVM tunings
-KBUILD_LDFLAGS += -mllvm -inline-threshold=500
+KBUILD_LDFLAGS += -mllvm -inline-threshold=275
+# Identical Code Folding (Safe replacement for Machine Outliner)
+KBUILD_LDFLAGS += -Wl,--icf=all
+# -O3: Optimizes binary layout and lookup tables (Faster access, Smaller size).
+KBUILD_LDFLAGS += -Wl,-O3
+# Tells LTO we have the full source, allowing deeper internal optimization.
+KBUILD_LDFLAGS += -mllvm -thinlto-assume-complete-module
 else
 lto-clang-flags	:= -flto
 endif
@@ -1031,25 +1034,133 @@ KBUILD_CFLAGS   += $(call cc-option,-Werror=incompatible-pointer-types)
 # Require designated initializers for all marked structures
 KBUILD_CFLAGS   += $(call cc-option,-Werror=designated-init)
 
+# Prevents Clang from adding "Probe" instructions to every function call.
+KBUILD_CFLAGS += $(call cc-option,-fno-stack-clash-protection)
+
+# Ensure compilers do not transform certain loops into calls to wcslen()
+KBUILD_CFLAGS += -fno-builtin-wcslen
+
+# Prevents Clang from replacing optimized kernel string functions 
+KBUILD_CFLAGS += -fno-builtin-bcmp
+
 # change __FILE__ to the relative path from the srctree
 KBUILD_CFLAGS	+= $(call cc-option,-fmacro-prefix-map=$(srctree)/=)
 
-# Use store motion pass for gcse
-KBUILD_CFLAGS	+= $(call cc-option,-fgcse-sm)
+# -O3 makes code fast but huge. Huge code lags on low end soc.
+# We force limit unrolling to keep code small, fitting in the L1 Cache.
+KBUILD_CFLAGS += -fno-unroll-loops
+KBUILD_CFLAGS += -mllvm -unroll-count=2
 
-# Clang-specific optimizations (target: Clang 21+)
-KBUILD_CFLAGS	+= $(call cc-option,-fipa-pta)
-KBUILD_CFLAGS	+= $(call cc-option,-funsafe-loop-optimizations)
-KBUILD_CFLAGS	+= $(call cc-option,-ftree-vectorize)
+# Aligns to 32-byte cache lines. Zero-wait fetching.
+KBUILD_CFLAGS += -falign-functions=32
+
+# Moves cold code (error handling) away from hot loops.
+# This keeps the instruction cache clean for active code, reducing lag.
+KBUILD_CFLAGS	+= $(call cc-option,-fsplit-machine-functions)
+
+# Replaces '-ftree-vectorize' (which is a GCC flag).
+# These are the correct modern flags for Clang vectorization.
+KBUILD_CFLAGS	+= -fvectorize -fslp-vectorize
+
+# Safe Math Shortcuts: The kernel doesn't use errno or FPU traps.
+# Disabling them allows the compiler to optimize math much harder.
+KBUILD_CFLAGS	+= -fno-math-errno -fno-trapping-math
+
+# Treats division as multiplication
+KBUILD_CFLAGS += -freciprocal-math -fno-signed-zeros
+
+# Groups global variables to reduce address calculation overhead.
+KBUILD_CFLAGS += -mglobal-merge
 
 ifdef CONFIG_CC_IS_CLANG
+# Advanced Loop Transforms :
+# 'Distribute' allows vectorizing complex loops. 'Unroll-and-Jam' helps cache.
+KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-loop-distribute)
+KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-unroll-and-jam)
+
+# 'Loop Flatten' merges nested loops.
+KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-loop-flatten)
+# 'Constraint Elimination' removes useless checks.
+KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-constraint-elimination)
+
 KBUILD_CFLAGS	+= $(call cc-option,-mllvm -unroll-threshold=150)
 KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-partial-inlining)
 KBUILD_CFLAGS	+= $(call cc-option,-mllvm -force-vector-width=4)
 KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-interleaved-mem-accesses)
-KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-licm-vrp)
-KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-dse-memoryssa)
+
+# Hides RAM latency by fetching data early
+KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-load-pre)
+KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-aa-sched-mi)
+
+# Vectorizes loops with 'if' statements
+KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-cond-stores-vec)
+# Allows unrolling loops that don't divide perfectly by 2
+KBUILD_CFLAGS += $(call cc-option,-mllvm -unroll-allow-partial)
+
+# Sinks identical code from branches to merge points. Reduces cache usage.
+KBUILD_CFLAGS += $(call cc-option,-mllvm -sink-common-insts)
+# Uses Data-Flow Analysis to skip redundant jumps in complex logic
+KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-dfa-jump-thread)
+
+# IPRA: Prevents useless RAM saves/restores between function calls.
+KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-ipra)
+
+# CCMP: Uses special ARM64 instructions to kill branches in "if" statements.
+KBUILD_CFLAGS += $(call cc-option,-mllvm -aarch64-enable-ccmp)
+
+# Emits hints allowing the linker to rewrite instruction sequences for better efficiency.
+KBUILD_CFLAGS += $(call cc-option,-mllvm -aarch64-enable-collect-loh)
+
+# Optimizes array index calculations for ARM64.
+KBUILD_CFLAGS += $(call cc-option,-mllvm -aarch64-enable-gep-opt)
+
+# Removes redundant math during the very first translation step.
+KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-cse-in-irtranslator)
+
+# Simplifies the messy control flow graph created by inline atomic operations.
+KBUILD_CFLAGS += $(call cc-option,-mllvm -aarch64-enable-atomic-cfg-tidy)
+
+# Increases aggressiveness of folding branches into math.
+KBUILD_CFLAGS += $(call cc-option,-mllvm -phi-node-folding-threshold=3)
+
+# Uses advanced algorithms to place code in memory.
+KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-ext-tsp-block-placement)
+
+# Allows the instruction combiner to merge operations involving memory loads by verifying they are safe.
+KBUILD_CFLAGS += $(call cc-option,-mllvm -combiner-global-alias-analysis)
+
 endif
+
+# Reorders code blocks for linear execution
+KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-block-placement)
+
+# Sibling Calls (Tail Calls)
+# Replaces 'Call + Return' with a single 'Jump'.
+# Saves Stack RAM and reduces CPU cycles.
+KBUILD_CFLAGS += -foptimize-sibling-calls
+
+# Hardware instruction scheduling
+KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-misched)
+KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-pipeliner)
+
+# Micro-Op Merging (Reduces instruction count)
+KBUILD_CFLAGS += $(call cc-option,-mllvm -aarch64-enable-ldst-opt)
+
+# Code Cleanup
+KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-subreg-liveness)
+
+# Disable Procedure Linkage Table
+# Forces direct function calls instead of looking up addresses.
+# Saves RAM and reduces CPU cycles for every function call.
+KBUILD_CFLAGS += -fno-plt
+
+# Disable Semantic Interposition
+# Tells Clang that functions defined in the kernel won't be replaced.
+# Allows better inlining and inter-procedural optimization.
+KBUILD_CFLAGS += -fno-semantic-interposition
+
+# No Outline Atomics: Direct atomic instructions 
+KBUILD_CFLAGS += -mno-outline-atomics
 
 # use the deterministic mode of AR if available
 KBUILD_ARFLAGS := $(call ar-option,D)
