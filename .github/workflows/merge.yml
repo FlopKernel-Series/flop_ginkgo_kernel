@@ -1,0 +1,314 @@
+name: Auto-merge upstream -> floppy-new (keep floppy-new; push-retry & repack)
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_repo:
+        description: 'Upstream repo to merge from (HTTPS).'
+        required: false
+        default: 'https://github.com/neophyteprjkt/kernel_xiaomi_ginkgo.git'
+      upstream_branch:
+        description: 'Upstream branch (name).'
+        required: false
+        default: 'main'
+      target_branch:
+        description: 'Target branch in this repo.'
+        required: false
+        default: 'floppy-new'
+      prefer_upstream:
+        description: 'If true prefer upstream (theirs) on conflicts.'
+        required: false
+        default: 'false'
+      push_retries:
+        description: 'Push retry attempts.'
+        required: false
+        default: '5'
+      repack_before_push:
+        description: 'Run git repack & gc before pushing (true/false).'
+        required: false
+        default: 'true'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (full)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set Git committer identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge and auto-resolve (generate log & push safely)
+        id: run_merge
+        shell: bash
+        run: |
+          set -u
+          set +e
+
+          TS=$(date -u +"%Y%m%d%H%M%S")
+          LOG_DIR="$GITHUB_WORKSPACE/logs"
+          mkdir -p "$LOG_DIR"
+          LOG_FILE="$LOG_DIR/merge-debug-$TS.log"
+          touch "$LOG_FILE"
+          exec > >(tee -a "$LOG_FILE") 2>&1
+
+          echo "=== Auto-merge run started: $(date -u) ==="
+          echo "Repository: $GITHUB_REPOSITORY"
+          echo "Run ID: $GITHUB_RUN_ID"
+
+          INPUT_PREF="${{ github.event.inputs.prefer_upstream || 'false' }}"
+          if [ "$INPUT_PREF" = "true" ] || [ "$INPUT_PREF" = "True" ]; then
+            STRATEGY="theirs"
+            echo "Using strategy: theirs (prefer upstream)"
+          else
+            STRATEGY="ours"
+            echo "Using strategy: ours (prefer floppy-new)"
+          fi
+
+          UPSTREAM_URL="${{ github.event.inputs.upstream_repo }}"
+          UPSTREAM_BRANCH="${{ github.event.inputs.upstream_branch }}"
+          TARGET_BRANCH="${{ github.event.inputs.target_branch }}"
+
+          git remote add upstream "$UPSTREAM_URL" 2>/dev/null || true
+          echo ""
+          echo "--- Fetching upstream/$UPSTREAM_BRANCH (full) ---"
+          git fetch --no-tags --prune upstream "$UPSTREAM_BRANCH" || echo "WARN: upstream fetch returned non-zero"
+
+          if [ "$(git rev-parse --is-shallow-repository 2>/dev/null || echo false)" = "true" ]; then
+            echo "Repository is shallow; attempting to unshallow..."
+            git fetch --unshallow || echo "WARN: unshallow failed"
+          fi
+
+          UPSTREAM_SHA=$(git rev-parse --short "upstream/$UPSTREAM_BRANCH" 2>/dev/null || echo "N/A")
+          echo "upstream/$UPSTREAM_BRANCH: $UPSTREAM_SHA"
+
+          echo ""
+          echo "--- Fetching origin/$TARGET_BRANCH ---"
+          git fetch --no-tags --prune origin "$TARGET_BRANCH" || echo "WARN: fetch origin $TARGET_BRANCH failed"
+          if git rev-parse --verify "origin/$TARGET_BRANCH" >/dev/null 2>&1; then
+            BASE_REF="origin/$TARGET_BRANCH"
+            BASE_SHA=$(git rev-parse --short "origin/$TARGET_BRANCH" 2>/dev/null || echo "N/A")
+            echo "Base: $BASE_REF ($BASE_SHA)"
+          else
+            BASE_REF="HEAD"
+            BASE_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "N/A")
+            echo "origin/$TARGET_BRANCH missing; using HEAD ($BASE_SHA)"
+          fi
+
+          TMP_BRANCH="auto/merge-${TS}"
+          echo ""
+          echo "Creating temporary branch: $TMP_BRANCH from $BASE_REF"
+          if git rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then
+            git checkout -b "$TMP_BRANCH" "$BASE_REF"
+          else
+            git checkout -b "$TMP_BRANCH"
+          fi
+          echo "tmp HEAD: $(git rev-parse --short HEAD)"
+
+          echo ""
+          echo "Merging upstream/$UPSTREAM_BRANCH with --allow-unrelated-histories -s recursive -X $STRATEGY --no-ff"
+          export GIT_AUTHOR_NAME="github-actions[bot]"
+          export GIT_AUTHOR_EMAIL="41898282+github-actions[bot]@users.noreply.github.com"
+          export GIT_COMMITTER_NAME="github-actions[bot]"
+          export GIT_COMMITTER_EMAIL="41898282+github-actions[bot]@users.noreply.github.com"
+
+          git merge --allow-unrelated-histories -s recursive -X "$STRATEGY" --no-edit --no-ff "upstream/$UPSTREAM_BRANCH"
+          MERGE_RC=$?
+          echo "git merge exit code: $MERGE_RC"
+
+          echo ""
+          echo "--- Post-merge diagnostics ---"
+          git status --porcelain -b || true
+          echo ""
+          git ls-files -u || true
+          echo ""
+          git --no-pager log -n 10 --oneline || true
+          echo "---------------------------------"
+          echo ""
+
+          CONFLICT_PATHS=$(git ls-files -u | awk '{print $4}' | sort -u || true)
+          if [ -n "$CONFLICT_PATHS" ]; then
+            echo "Conflicted paths detected (sample up to 200 lines):"
+            echo "$CONFLICT_PATHS" | sed -n '1,200p'
+            UNMERGED_PRESENT=1
+          else
+            echo "No unmerged paths detected."
+            UNMERGED_PRESENT=0
+          fi
+
+          AUTO_RESOLVED="false"
+          if [ "$UNMERGED_PRESENT" -eq 1 ]; then
+            if [ "$STRATEGY" = "ours" ] || [ "$STRATEGY" = "theirs" ]; then
+              echo "Auto-resolving conflicts with per-file checkout ($STRATEGY)"
+              for p in $CONFLICT_PATHS; do
+                echo "Resolving: $p"
+                if [ "$STRATEGY" = "ours" ]; then
+                  git checkout --ours -- "$p" || true
+                else
+                  git checkout --theirs -- "$p" || true
+                fi
+                git add "$p" || true
+              done
+
+              if git diff --cached --quiet; then
+                echo "No staged changes to commit after auto-resolve."
+              else
+                git commit -m "Auto-resolve merge conflicts (strategy=${STRATEGY})" || true
+              fi
+
+              if git ls-files -u | grep -q .; then
+                echo "Some conflicts remain after auto-resolve."
+                MERGE_RESULT="conflict"
+              else
+                echo "All conflicts resolved by auto-resolve."
+                MERGE_RESULT="clean"
+                AUTO_RESOLVED="true"
+              fi
+            else
+              echo "Conflicts present but no auto-resolve strategy specified."
+              MERGE_RESULT="conflict"
+            fi
+          else
+            MERGE_RESULT="clean"
+          fi
+
+          echo ""
+          echo "--- Repacking & GC to ensure clean pack for push ---"
+          if [ "${{ github.event.inputs.repack_before_push || 'true' }}" = "true" ]; then
+            git repack -a -d || echo "WARN: git repack failed"
+            git gc --prune=now || echo "WARN: git gc failed"
+          fi
+
+          push_with_retries() {
+            local refspec="$1"
+            local tries=0
+            local max=${{ github.event.inputs.push_retries || '5' }}
+            local ok=0
+            while [ $tries -lt $max ]; do
+              tries=$((tries+1))
+              echo "Push attempt #$tries: git push origin $refspec"
+              git push origin $refspec && { ok=1; break; }
+              echo "Push attempt #$tries failed; sleeping $((tries*5))s before retry..."
+              sleep $((tries*5))
+            done
+            if [ $ok -eq 1 ]; then
+              return 0
+            else
+              return 1
+            fi
+          }
+
+          echo "tmp_branch=$TMP_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "merge_result=$MERGE_RESULT" >> "$GITHUB_OUTPUT"
+          echo "auto_resolved=$AUTO_RESOLVED" >> "$GITHUB_OUTPUT"
+          echo "merge_rc=$MERGE_RC" >> "$GITHUB_OUTPUT"
+          echo "upstream_sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "merge_log=$LOG_FILE" >> "$GITHUB_OUTPUT"
+          echo "strategy=$STRATEGY" >> "$GITHUB_OUTPUT"
+
+          echo ""
+          echo "--- Pushing temporary branch to origin (with retries) ---"
+          if push_with_retries "$TMP_BRANCH"; then
+            echo "PUSH_TMP_OK=1"
+            echo "push_tmp_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "PUSH_TMP_OK=0"
+            echo "push_tmp_ok=false" >> "$GITHUB_OUTPUT"
+            echo "WARN: failed to push temporary branch after retries"
+          fi
+
+          PUSHED_TO_TARGET="false"
+          if [ "$MERGE_RESULT" = "clean" ]; then
+            echo ""
+            echo "--- Attempting to push merged result to $TARGET_BRANCH (with retries) ---"
+            if push_with_retries "${TMP_BRANCH}:refs/heads/$TARGET_BRANCH"; then
+              echo "PUSH_TARGET_OK=1"
+              PUSHED_TO_TARGET="true"
+              echo "pushed_to_target=true" >> "$GITHUB_OUTPUT"
+              echo "Deleting remote temporary branch origin/$TMP_BRANCH (cleanup)"
+              git push origin --delete "$TMP_BRANCH" || echo "WARN: failed to delete remote tmp branch"
+            else
+              echo "PUSH_TARGET_OK=0"
+              echo "WARN: failed to push merged result to $TARGET_BRANCH after retries"
+            fi
+          else
+            echo "Not pushing to $TARGET_BRANCH because merge_result != clean"
+          fi
+
+          echo "pushed_to_target=$PUSHED_TO_TARGET" >> "$GITHUB_OUTPUT"
+          echo "=== Merge run completed: $(date -u) ==="
+          exit 0
+
+      - name: Sanitize artifact name & determine artifact path
+        id: artifact
+        shell: bash
+        run: |
+          set -u
+          LOG="${{ steps.run_merge.outputs.merge_log }}"
+          if [ -n "$LOG" ]; then
+            echo "artifact_path=$LOG" >> $GITHUB_OUTPUT
+          else
+            echo "artifact_path=$GITHUB_WORKSPACE/logs/*.log" >> $GITHUB_OUTPUT
+          fi
+
+          RAW="${{ steps.run_merge.outputs.tmp_branch }}"
+          if [ -z "$RAW" ]; then
+            RAW="run-${{ github.run_id }}"
+          fi
+
+          SAFE="${RAW//\//-}"
+          SAFE="${SAFE//:/-}"
+          SAFE="${SAFE//\\/-}"
+          SAFE="${SAFE//\"/-}"
+          SAFE="${SAFE// /-}"
+          SAFE="${SAFE//\$/-}"
+          SAFE="${SAFE:0:120}"
+          echo "artifact_safe_name=$SAFE" >> $GITHUB_OUTPUT
+
+      - name: Upload merge log artifact (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: merge-debug-logs-${{ steps.artifact.outputs.artifact_safe_name }}
+          path: ${{ steps.artifact.outputs.artifact_path }}
+
+      - name: Create PR if merge failed or push to target failed
+        if: ${{ steps.run_merge.outputs.merge_result != 'clean' || steps.run_merge.outputs.pushed_to_target != 'true' }}
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          title: |
+            Auto-merge: upstream/${{ github.event.inputs.upstream_branch || 'main' }} → ${{ github.event.inputs.target_branch || 'floppy-new' }} (strategy: ${{ steps.run_merge.outputs.strategy }})
+          body: |
+            Automated merge run results:
+
+            - tmp branch: ${{ steps.run_merge.outputs.tmp_branch }}
+            - upstream: ${{ github.event.inputs.upstream_repo || 'https://github.com/neophyteprjkt/kernel_xiaomi_ginkgo.git' }}#${{ github.event.inputs.upstream_branch || 'main' }}
+            - upstream main sha: ${{ steps.run_merge.outputs.upstream_sha }}
+            - base sha used: ${{ steps.run_merge.outputs.base_sha }}
+            - strategy: ${{ steps.run_merge.outputs.strategy }}
+            - merge_result: ${{ steps.run_merge.outputs.merge_result }}
+            - auto_resolved: ${{ steps.run_merge.outputs.auto_resolved }}
+            - Logs: download merge-debug-logs-${{ steps.artifact.outputs.artifact_safe_name }}
+          base: ${{ github.event.inputs.target_branch || 'floppy-new' }}
+          head: ${{ steps.run_merge.outputs.tmp_branch }}
+          labels: automated, auto-merge, merge-debug
+
+      - name: Final summary printed in workflow
+        run: |
+          echo "=== SUMMARY ==="
+          echo "tmp_branch: ${{ steps.run_merge.outputs.tmp_branch }}"
+          echo "merge_result: ${{ steps.run_merge.outputs.merge_result }}"
+          echo "auto_resolved: ${{ steps.run_merge.outputs.auto_resolved }}"
+          echo "pushed_to_target: ${{ steps.run_merge.outputs.pushed_to_target }}"
+          echo "log artifact: merge-debug-logs-${{ steps.artifact.outputs.artifact_safe_name }}"

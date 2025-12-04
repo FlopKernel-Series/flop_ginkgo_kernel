@@ -1,0 +1,82 @@
+name: Bulk Revert Commits
+
+on:
+  workflow_dispatch:
+    inputs:
+      commits_data:
+        description: 'List of Commit SHAs to revert (separated by comma, space, or newlines)'
+        required: true
+        type: string
+        default: |
+          sha1, sha2
+          sha3
+
+permissions:
+  contents: write
+
+jobs:
+  bulk-revert:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout floppy-new
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: floppy-new
+
+      - name: Set git user
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+      - name: Process Bulk Reverts
+        run: |
+          set -e # Exit immediately on error
+
+          TARGET_BRANCH="floppy-new"
+          git fetch origin "$TARGET_BRANCH"
+          git checkout "$TARGET_BRANCH"
+
+          echo "Starting Batch Revert process..."
+          echo "-------------------------------------"
+
+          # 1. Clean the input: Replace newlines and commas with spaces
+          RAW_INPUT="${{ github.event.inputs.commits_data }}"
+          # Replace newlines with spaces
+          CLEAN_INPUT=$(echo "$RAW_INPUT" | tr '\n' ' ' | tr ',' ' ')
+
+          # 2. Convert to array
+          read -ra SHAS <<< "$CLEAN_INPUT"
+
+          # 3. Loop through SHAs
+          for SHA in "${SHAS[@]}"; do
+            # Trim whitespace
+            SHA=$(echo "$SHA" | xargs)
+
+            if [[ -z "$SHA" ]]; then
+              continue
+            fi
+
+            echo ">>> Processing Revert for: $SHA"
+
+            # Check if SHA exists locally
+            if ! git cat-file -t "$SHA" > /dev/null 2>&1; then
+                echo "    ERROR: Commit $SHA does not exist in this branch history."
+                echo "           Make sure you are using the Local SHA, not the Remote SHA."
+                exit 1
+            fi
+
+            # Apply Revert
+            if git revert --no-edit "$SHA"; then
+                echo "    SUCCESS: Reverted $SHA"
+            else
+                echo "    CONFLICT: Failed to revert $SHA"
+                echo "    Aborting revert to preserve state."
+                git revert --abort
+                exit 1
+            fi
+          done
+
+          echo "-------------------------------------"
+          echo "Batch processing complete. Pushing changes..."
+          git push origin "$TARGET_BRANCH"

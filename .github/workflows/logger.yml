@@ -1,0 +1,268 @@
+name: AI Kernel Architect 
+
+on:
+  workflow_dispatch:
+    inputs:
+      task_mode:
+        description: 'SELECT MISSION MODE'
+        required: true
+        default: 'execute_merge_and_fix'
+        type: choice
+        options:
+          # --- GROUP A: SCOUTING (Analysis) ---
+          - analyze_build         # Runs Build -> Dumps Errors & Headers
+          - analyze_merge         # Dry-run Merge -> Dumps Conflicts & Diffs
+          - analyze_cherry_pick   # Dry-run Pick -> Dumps Conflicts & Diffs
+          - analyze_revert        # Dry-run Revert -> Dumps Conflicts & Diffs
+          - analyze_single_file   # Scans specific file -> Dumps Context & Links
+          - analyze_audit         # General scan against upstream -> Dumps Diffs
+          
+          # --- GROUP B: EXECUTION (Action) ---
+          - execute_fix_script    # Checkout -> Run 'healer.sh' -> Push
+          - execute_merge_and_fix # Merge -> Run 'healer.sh' -> Push
+
+      target_input_data:
+        description: 'DATA: SHA, Branch, or File Path'
+        required: false
+        default: ''
+        type: string
+
+      fix_commands:
+        description: '(OPTIONAL) Backup script input (Only used if healer.sh is missing from repo)'
+        required: false
+        default: ''
+        type: string
+
+      # --- CONFIG ---
+      device_name: { default: 'ginkgo', description: 'Device Name' }
+      build_variant: { default: 'Vanilla', description: 'Variant', type: choice, options: [Vanilla, KSUNext, SukiSU] }
+      work_branch: { default: 'floppy-new', description: 'Working Branch' }
+      upstream_url: { default: 'https://github.com/neophyteprjkt/kernel_xiaomi_ginkgo', description: 'Remote Repo' }
+      upstream_ref: { default: 'main', description: 'Remote Branch Name' }
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  ai_omni_core:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TASK: ${{ github.event.inputs.task_mode }}
+      INPUT_DATA: ${{ github.event.inputs.target_input_data }}
+      FIX_SCRIPT: ${{ github.event.inputs.fix_commands }}
+      DEVICE: ${{ github.event.inputs.device_name }}
+      VARIANT: ${{ github.event.inputs.build_variant }}
+      REMOTE_URL: ${{ github.event.inputs.upstream_url }}
+      REMOTE_REF: ${{ github.event.inputs.upstream_ref }}
+      BRANCH: ${{ github.event.inputs.work_branch }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      USE_CCACHE: 1
+      FIX_FAILED: "false"
+
+    steps:
+      - name: Disk Cleanup
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc "$AGENT_TOOLSDIRECTORY"
+
+      - name: Checkout Source
+        uses: actions/checkout@v4
+        with:
+          ref: "${{ github.event.inputs.work_branch }}"
+          fetch-depth: 0
+
+      # --- SETUP ---
+      - name: Cache Pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: "pip-${{ runner.os }}"
+
+      - name: Cache Toolchain
+        uses: actions/cache@v4
+        with:
+          path: toolchains
+          key: "clang-zyc-new-${{ runner.os }}"
+
+      - name: Cache Ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: kernel-ccache-${{ env.DEVICE }}
+          restore-keys: kernel-ccache-
+
+      - name: Environment Setup
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends git curl bc bison flex ccache \
+            python3-pip ninja-build libssl-dev libelf-dev device-tree-compiler \
+            libncurses-dev build-essential wget
+          
+          if [ ! -f /usr/lib/x86_64-linux-gnu/libtinfo.so.5 ]; then
+             sudo ln -s /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
+          fi
+          
+          pip install gitpython --break-system-packages || pip install gitpython
+
+          # Toolchain Setup (Using git clone for robustness)
+          mkdir -p toolchains/bin
+          if [ ! -d "toolchains/clang" ]; then
+             git clone --depth=1 https://github.com/ZyCromerZ/Clang toolchains/clang
+          fi
+          echo "$(pwd)/toolchains/clang/bin" >> $GITHUB_PATH
+
+          export CCACHE_EXEC=/usr/bin/ccache
+          ccache -M 10G
+          git config --global user.name "Floppy-Bot"
+          git config --global user.email "bot@floppy.ai"
+          # Stop toolchain warning
+          git config --global advice.addEmbeddedRepo false
+
+      # =========================================================
+      # ⚠️ EXECUTION PHASE: MERGE & HEAL
+      # =========================================================
+
+      - name: ⚙️ EXECUTE Merge & Fix
+        if: ${{ contains(env.TASK, 'execute') }}
+        shell: bash
+        run: |
+          touch operation.log
+          echo "=== 🚀 MISSION START: $TASK ===" | tee -a operation.log
+          
+          git remote add upstream "$REMOTE_URL" || true
+          git fetch upstream 2>&1 | tee -a operation.log
+          
+          # 1. MERGE (If requested)
+          if [[ "$TASK" == "execute_merge_and_fix" ]]; then
+             TARGET=${INPUT_DATA:-$REMOTE_REF}
+             echo ">>> Merging upstream/$TARGET..." | tee -a operation.log
+             git merge --no-commit --no-ff "upstream/$TARGET" 2>&1 | tee -a operation.log || echo "⚠️ Conflicts detected (Expected)." | tee -a operation.log
+          fi
+
+          # 2. LOCATE SCRIPT
+          if [ -f "healer.sh" ]; then
+             echo "✅ FOUND LOCAL SCRIPT: ./healer.sh" | tee -a operation.log
+             chmod +x healer.sh
+          elif [ -f ".github/workflows/healer.sh" ]; then
+             echo "✅ FOUND WORKFLOW SCRIPT: .github/workflows/healer.sh" | tee -a operation.log
+             cp .github/workflows/healer.sh .
+             chmod +x healer.sh
+          elif [ ! -z "$FIX_SCRIPT" ]; then
+             echo "⚠️ Using Input Box Script..." | tee -a operation.log
+             python3 -c "import os; s = os.environ.get('FIX_SCRIPT', ''); s = s.replace('\`\`\`bash', '').replace('\`\`\`', ''); open('healer.sh', 'w').write(s)"
+             sed -i 's/\r$//' healer.sh
+             chmod +x healer.sh
+          else
+             echo "❌ CRITICAL: No script found!" | tee -a operation.log
+             echo "FIX_FAILED=true" >> $GITHUB_ENV
+             exit 0
+          fi
+
+          # 3. RUN HEALER
+          echo ">>> Executing Healer..." | tee -a operation.log
+          bash -x ./healer.sh 2>&1 | tee -a operation.log || echo "⚠️ Script warnings detected..." | tee -a operation.log
+          
+          # 4. VERIFICATION
+          echo ">>> Verifying..." | tee -a operation.log
+          
+          # A. Check for Unmerged files
+          if [[ -n $(git diff --name-only --diff-filter=U) ]]; then
+             echo "❌ CRITICAL: Unmerged files remain!" | tee -a operation.log
+             git diff --name-only --diff-filter=U >> operation.log
+             echo "FIX_FAILED=true" >> $GITHUB_ENV
+             exit 0
+          fi
+          
+          # B. Marker Check (EXCLUDING LOGS, SCRIPTS, YML)
+          if grep -r "<<<<<<< HEAD" . --exclude-dir=.github --exclude=ai_brain.py --exclude=healer.sh --exclude=*.yml --exclude=operation.log; then
+             echo "❌ CRITICAL: Text conflict markers found in SOURCE CODE!" | tee -a operation.log
+             grep -rIl "<<<<<<< HEAD" . --exclude-dir=.github --exclude=ai_brain.py --exclude=healer.sh --exclude=operation.log >> operation.log
+             echo "FIX_FAILED=true" >> $GITHUB_ENV
+             exit 0
+          else
+             echo "✅ Verification Passed." | tee -a operation.log
+          fi
+          
+          # 5. COMMIT (WITH SAFETY FILTER)
+          if [ ! -z "$FIX_SCRIPT" ] && [ ! -f ".github/workflows/healer.sh" ] && [ ! -f "healer.sh" ]; then
+             rm -f healer.sh
+          fi
+          
+          # CRITICAL FIX FOR ERROR 128:
+          # Remove toolchains from git index explicitly before adding "."
+          echo "🛡️  Preventing toolchain submodule error..."
+          git rm -r --cached toolchains > /dev/null 2>&1 || true
+          
+          git add .
+          
+          # Double Check: Unstage toolchains if 'git add .' grabbed them
+          git reset HEAD toolchains > /dev/null 2>&1 || true
+          
+          if git diff-index --quiet HEAD --; then
+             echo "⚠️ No changes to commit." | tee -a operation.log
+          else
+             git commit -m "AI Fix: Resolved Conflicts & Merged $TARGET" 
+             git push origin $BRANCH 2>&1 | tee -a operation.log
+          fi
+
+      # =========================================================
+      # ⚠️ SCOUTING PHASE (Analysis)
+      # =========================================================
+
+      - name: 🔬 SCOUT Operations
+        if: ${{ contains(env.TASK, 'analyze') }}
+        run: |
+          git remote add upstream "$REMOTE_URL" || true
+          git fetch upstream
+          
+          DATA="${INPUT_DATA:-$REMOTE_REF}"
+          echo "Target: $DATA"
+          
+          if [[ "$TASK" == "analyze_build" ]]; then
+             bash ./do_build.sh $DEVICE $VARIANT > full.log 2>&1 || true
+             grep -E "error:|warning:" full.log > build_errors.txt
+          
+          elif [[ "$TASK" == "analyze_merge" ]]; then
+             git merge --no-commit --no-ff "upstream/$DATA" || true
+             git diff --name-only --diff-filter=U > conflicts.txt
+             
+          elif [[ "$TASK" == "analyze_audit" ]]; then
+             git diff --name-only "upstream/$DATA...HEAD" > diff_list.txt
+          fi
+
+      # =========================================================
+      # ⚠️ REPORTING
+      # =========================================================
+      - name: 📝 GENERATE REPORT
+        if: always()
+        shell: python
+        run: |
+          import os, re
+          FAILED = os.environ.get("FIX_FAILED", "false")
+          TASK = os.environ.get("TASK", "N/A")
+          
+          briefing = f"# 🤖 MISSION REPORT: {TASK}\n"
+          if FAILED == "true":
+              briefing = "# ❌ MISSION FAILED\nConflicts could not be resolved automatically.\n"
+              briefing += "Check `operation.log` for details.\n"
+          
+          if os.path.exists("conflicts.txt"):
+              files = open("conflicts.txt").read().splitlines()
+              briefing += f"\n**Conflicts Detected:** {len(files)}\n"
+              for f in files: briefing += f"- {f}\n"
+              
+          with open("Mission_Briefing.txt", "w") as f: f.write(briefing)
+
+      - name: 📤 UPLOAD ARTIFACTS
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mission_Logs
+          path: |
+            Mission_Briefing.txt
+            operation.log
+            healer.sh
+
+      - name: 🛑 FAIL ON ERROR
+        if: ${{ env.FIX_FAILED == 'true' }}
+        run: exit 1

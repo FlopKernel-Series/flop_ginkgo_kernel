@@ -1,0 +1,75 @@
+
+name: Floppy Single Commit Cherry-pick / Revert
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'cherry-pick or revert'
+        required: true
+        default: 'cherry-pick'
+      source_repo:
+        description: 'owner/repo to fetch from (required for cherry-pick)'
+        required: false
+        default: ''
+      commit_sha:
+        description: 'commit SHA to cherry-pick or revert'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout floppy-new
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: floppy-new
+
+      - name: Set git user
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+      - name: Apply action
+        run: |
+          set -euo pipefail
+
+          ACTION="${{ github.event.inputs.action }}"
+          SOURCE_REPO="${{ github.event.inputs.source_repo }}"
+          COMMIT_SHA="${{ github.event.inputs.commit_sha }}"
+          TARGET_BRANCH="floppy-new"
+
+          git fetch origin "$TARGET_BRANCH"
+          git checkout "$TARGET_BRANCH"
+
+          if [ "$ACTION" = "cherry-pick" ]; then
+              if [ -z "$SOURCE_REPO" ]; then
+                  echo "ERROR: source_repo is required for cherry-pick"
+                  exit 1
+              fi
+              git fetch "https://github.com/${SOURCE_REPO}.git" "$COMMIT_SHA"
+              if git cherry-pick -x FETCH_HEAD; then
+                  echo "Cherry-pick applied successfully."
+                  git push origin "$TARGET_BRANCH"
+              else
+                  echo "Conflict occurred during cherry-pick. Aborting."
+                  git cherry-pick --abort || true
+                  exit 1
+              fi
+          elif [ "$ACTION" = "revert" ]; then
+              if git revert --no-edit "$COMMIT_SHA"; then
+                  echo "Revert applied successfully."
+                  git push origin "$TARGET_BRANCH"
+              else
+                  echo "Conflict occurred during revert. Aborting."
+                  git revert --abort || true
+                  exit 1
+              fi
+          else
+              echo "ERROR: unknown action: $ACTION"
+              exit 2
+          fi
