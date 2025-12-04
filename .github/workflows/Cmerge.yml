@@ -1,0 +1,104 @@
+name: Bulk Multi-Repo Cherry-pick
+
+on:
+  workflow_dispatch:
+    inputs:
+      cherry_pick_data:
+        description: 'Format: "owner/repo: sha1, sha2, sha3" (One repo per line)'
+        required: true
+        type: string
+        default: |
+          owner/repo_one: sha1, sha2
+          owner/repo_two: sha3
+
+permissions:
+  contents: write
+
+jobs:
+  bulk-cherry-pick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout floppy-new
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: floppy-new
+
+      - name: Set git user
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+      - name: Process Bulk Cherry-picks
+        run: |
+          set -e # Exit immediately if a command fails
+
+          # 1. Define Target Branch
+          TARGET_BRANCH="floppy-new"
+          git fetch origin "$TARGET_BRANCH"
+          git checkout "$TARGET_BRANCH"
+
+          # 2. Save input to a temporary file
+          echo "${{ github.event.inputs.cherry_pick_data }}" > raw_input.txt
+
+          echo "Starting Batch Cherry-pick process..."
+          echo "-------------------------------------"
+
+          # 3. Read file line by line
+          while IFS= read -r line || [ -n "$line" ]; do
+            # Skip empty lines or lines starting with #
+            if [[ -z "$line" ]] || [[ "$line" == \#* ]]; then
+              continue
+            fi
+
+            # Extract Repo (Before the colon)
+            REPO=$(echo "$line" | cut -d':' -f1 | tr -d '[:space:]')
+            
+            # Extract Commits String (After the colon)
+            COMMITS_STR=$(echo "$line" | cut -d':' -f2)
+
+            # Split commits by comma
+            IFS=',' read -ra ADDR <<< "$COMMITS_STR"
+
+            # Check if Repo is valid
+            if [[ -z "$REPO" ]]; then
+              echo "WARNING: skipping invalid line: $line"
+              continue
+            fi
+
+            echo ">>> Processing Repo: $REPO"
+
+            # Loop through each commit SHA for this repo
+            for SHA in "${ADDR[@]}"; do
+              # Clean whitespace around SHA
+              SHA=$(echo "$SHA" | tr -d '[:space:]')
+
+              if [[ -z "$SHA" ]]; then
+                continue
+              fi
+
+              echo "    -> Fetching & Picking commit: $SHA"
+              
+              # Fetch the specific commit object
+              # We use || true on fetch to prevent crashing script on bad url, 
+              # but check validity immediately after.
+              git fetch "https://github.com/${REPO}.git" "$SHA" || {
+                  echo "    ERROR: Could not fetch $SHA from $REPO. Check Repo/SHA."
+                  exit 1
+              }
+
+              # Apply Cherry Pick
+              if git cherry-pick -x FETCH_HEAD; then
+                  echo "    SUCCESS: Applied $SHA"
+              else
+                  echo "    CONFLICT: Failed to apply $SHA"
+                  echo "    Aborting cherry-pick to preserve state."
+                  git cherry-pick --abort
+                  exit 1
+              fi
+            done
+          done < raw_input.txt
+
+          echo "-------------------------------------"
+          echo "Batch processing complete. Pushing changes..."
+          git push origin "$TARGET_BRANCH"

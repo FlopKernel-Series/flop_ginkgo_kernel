@@ -1,0 +1,281 @@
+name: FloppyKernel – Build matrix & Release 
+
+on:
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create GitHub Release after build (true/false)'
+        required: false
+        default: 'true'
+  push:
+    branches:
+      - main
+      - release/*
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+      - 'README.md'
+
+permissions:
+  contents: write
+
+env:
+  # --- DIRECTORIES ---
+  TOOLCHAIN_DIR: ${{ github.workspace }}/toolchains/custom-toolchain
+  CCACHE_DIR: "/home/runner/.ccache"
+  WP: ${{ github.workspace }}
+  
+  # --- UPSTREAM CONFIG ---
+  LLVM_WEEKLY_LATEST: "https://raw.githubusercontent.com/PurrrsLitterbox/LLVM-weekly/main/latestlink.txt"
+  
+  # --- BUILD ENVIRONMENT ---
+  ARCH: arm64
+  SUBARCH: arm64
+  CLANG_TYPE: custom
+  USE_CCACHE: 1
+  CCACHE_SIZE: "2G"
+  CCACHE_COMPRESS: "1"
+
+  # --- [WORKFLOW OPTIMIZATION HACKS] ---
+  # 1. Force LLVM everywhere 
+  LLVM: "1"
+  LLVM_IAS: "1"
+  # 2. Module Stripping (The "dstrip" equivalent). Reduces RAM usage & Boot time.
+  INSTALL_MOD_STRIP: "1"
+  # 3. Disable Asserts (Remove runtime safety checks for speed)
+  KCPPFLAGS: "-DNDEBUG"
+
+jobs:
+  build:
+    name: Build ${{ matrix.device }}-${{ matrix.variant }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [ginkgo, laurel_sprout]
+        variant: [Vanilla, KSUNext, SukiSU]
+
+    steps:
+      # 1. Get Source Code (Fastest Method)
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      # 2. Install Tools (Only what is missing)
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex build-essential ninja-build lz4 zstd \
+            libssl-dev libelf-dev device-tree-compiler \
+            ccache binutils file optipng jpegoptim \
+            python3 python3-pip
+
+      # --- HACK: PREVENT CLANG CRASH (139) ---
+      - name: Hack - Setup Swap & Resource Limits
+        run: |
+          echo "::group::Setting up 12GB Swap"
+          sudo fallocate -l 12G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          sudo swapon --show
+          echo "::endgroup::"
+      # --- END HACK ---
+
+      # 3. Handle LLVM Updates (Robust Check)
+      - name: Check Upstream LLVM Version
+        id: check-llvm
+        run: |
+          LATEST_URL=$(curl -fsSL "${{ env.LLVM_WEEKLY_LATEST }}" 2>/dev/null | tr -d '[:space:]')
+          if [ -z "$LATEST_URL" ]; then
+            echo "::error::Failed to fetch LLVM URL."
+            exit 1
+          fi
+          echo "LLVM_URL=$LATEST_URL" >> $GITHUB_ENV
+          URL_HASH=$(echo -n "$LATEST_URL" | sha256sum | head -c 16)
+          echo "cache_key=$URL_HASH" >> $GITHUB_OUTPUT
+
+      # 4. Cache Toolchain
+      - name: Cache LLVM Toolchain
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.TOOLCHAIN_DIR }}
+          key: llvm-${{ steps.check-llvm.outputs.cache_key }}
+
+      # 5. Download LLVM (If Cache Miss)
+      - name: Download & Install LLVM
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "${{ env.TOOLCHAIN_DIR }}"
+          cd "${{ env.TOOLCHAIN_DIR }}"
+          wget -qO clang.tar.zst "${{ env.LLVM_URL }}"
+          if [ -f clang.tar.zst ]; then
+            zstd -d -c clang.tar.zst | tar -xf -
+            rm -f clang.tar.zst
+          else
+            echo "::error::Download failed!"
+            exit 1
+          fi
+
+      - name: Verify Clang
+        run: |
+          export PATH="${{ env.TOOLCHAIN_DIR }}/bin:$PATH"
+          clang --version
+
+      # 6. Cache CCache (Speeds up recompilation)
+      - name: Cache CCache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ matrix.device }}-${{ matrix.variant }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ matrix.device }}-${{ matrix.variant }}-
+            ccache-
+
+      - name: Setup CCache
+        run: |
+          mkdir -p ${{ env.CCACHE_DIR }}
+          ccache -M ${{ env.CCACHE_SIZE }}
+          ccache -z
+
+      # 7. Environment Setup
+      - name: Prepare Environment
+        run: |
+          # Ensure LLD is used if available
+          if command -v ld.lld >/dev/null 2>&1; then
+             echo "LD=ld.lld" >> $GITHUB_ENV
+          else
+             sudo apt-get install -y lld
+             echo "LD=ld.lld" >> $GITHUB_ENV
+          fi
+          # Maximize CPU usage
+          echo "MAKEFLAGS=-j$(nproc --all)" >> $GITHUB_ENV
+          echo "JOBS=$(nproc --all)" >> $GITHUB_ENV
+
+      # 8. Build Script Execution
+      - name: Run Build Script
+        id: build_kernel
+        shell: bash -l {0}
+        run: |
+          # --- HACK: UNLIMIT STACK ---
+          # Prevents compiler crash on deep recursion (common with LTO)
+          ulimit -s unlimited
+          # ---------------------------
+
+          case "${{ matrix.variant }}" in
+            Vanilla) FLAG="" ;;
+            KSUNext) FLAG="k" ;;
+            SukiSU)  FLAG="s" ;;
+          esac
+          
+          echo "::group::Build Config"
+          echo "Device: ${{ matrix.device }}"
+          echo "Variant: ${{ matrix.variant }}"
+          echo "::endgroup::"
+
+          export PATH="${{ env.TOOLCHAIN_DIR }}/bin:/usr/lib/ccache:$PATH"
+          
+          chmod +x do_build.sh ckbuild.sh
+          
+          set -o pipefail
+          ./do_build.sh "${{ matrix.device }}" "$FLAG" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      # 9. Post-Build: Stats & Logs
+      - name: Check CCache Stats
+        if: always()
+        run: ccache -s
+
+      - name: Filter Logs (Errors/Warnings)
+        if: failure() || success()
+        run: |
+          LOG="$GITHUB_WORKSPACE/build.log"
+          if [ -f "$LOG" ]; then
+            grep -nEi '(error|warning):' "$LOG" > "$GITHUB_WORKSPACE/full_issues.log" || true
+            grep -i "error:" "$GITHUB_WORKSPACE/full_issues.log" > "$GITHUB_WORKSPACE/errors.log" || true
+            grep -i "warning:" "$GITHUB_WORKSPACE/full_issues.log" > "$GITHUB_WORKSPACE/warnings.log" || true
+          fi
+
+      # 10. Gather Artifacts
+      - name: Stage Zips
+        id: stage_zips
+        if: success()
+        run: |
+          mkdir -p release_artifacts
+          find "$GITHUB_WORKSPACE" -maxdepth 4 -name "*.zip" -size +10M -exec cp -v {} release_artifacts/ \;
+          if [ -z "$(ls -A release_artifacts)" ]; then
+             echo "::warning::No kernel ZIPs found!"
+             echo "zip_found=false" >> $GITHUB_OUTPUT
+          else
+             echo "zip_found=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.device }}-${{ matrix.variant }}
+          path: |
+            build.log
+            errors.log
+            warnings.log
+
+      - name: Upload Kernel ZIPs
+        if: steps.stage_zips.outputs.zip_found == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-${{ matrix.device }}-${{ matrix.variant }}
+          path: release_artifacts/*.zip
+          compression-level: 0
+
+  create_release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: |
+      success() && 
+      ((github.event_name == 'workflow_dispatch' && inputs.create_release == 'true') ||
+       startsWith(github.ref, 'refs/tags/'))
+    
+    steps:
+      # --- FIX: CHECKOUT REPO (REQUIRED FOR RELEASE) ---
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      # -------------------------------------------------
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: kernel-*
+          merge-multiple: true
+
+      - name: Prepare Release Assets
+        run: |
+          mkdir -p final_assets
+          DATE=$(date -u +%Y.%m.%d)
+          
+          cd artifacts
+          for file in *.zip; do
+             mv "$file" "../final_assets/${DATE}-R${{ github.run_number }}-${file}"
+          done
+          
+          echo "Assets prepared:"
+          ls -lh ../final_assets/
+
+      - name: Publish Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="FloppyKernel-${{ github.run_number }}-$(date -u +%Y%m%d)"
+          TITLE="Floppy Kernel CI • Build ${{ github.run_number }}"
+          
+          gh release create "$TAG" \
+            --title "$TITLE" \
+            --notes "Automated CI Build | Toolchain: LLVM (Latest Weekly) | Devices: Ginkgo/Laurel" \
+            --target "${{ github.sha }}" \
+            final_assets/*.zip
