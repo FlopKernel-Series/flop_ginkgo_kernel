@@ -1,1 +1,114 @@
-panic!
+name: Bulk Delete Commits (Rewrite History)
+
+on:
+  workflow_dispatch:
+    inputs:
+      commits_data:
+        description: 'List of Commit SHAs to DELETE (separated by comma, space, or newlines)'
+        required: true
+        type: string
+        default: |
+          sha1, sha2
+
+permissions:
+  contents: write
+
+jobs:
+  bulk-delete:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout floppy-new
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 0 is required for rebase to access full history
+          ref: floppy-new
+
+      - name: Set git user
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+      - name: Process Bulk Deletion
+        run: |
+          set -e
+
+          TARGET_BRANCH="floppy-new"
+          
+          # 1. Clean the input
+          RAW_INPUT="${{ github.event.inputs.commits_data }}"
+          CLEAN_INPUT=$(echo "$RAW_INPUT" | tr '\n' ' ' | tr ',' ' ')
+          read -ra SHAS <<< "$CLEAN_INPUT"
+
+          if [ ${#SHAS[@]} -eq 0 ]; then
+            echo "No SHAs provided."
+            exit 1
+          fi
+
+          echo "Preparing to DELETE the following commits from history:"
+          printf '%s\n' "${SHAS[@]}"
+          echo "-------------------------------------"
+
+          # 2. Find the oldest commit in the list to determine where to start rebase
+          # We need to rebase starting from the parent of the oldest commit provided.
+          OLDEST_TIMESTAMP=9999999999
+          START_POINT=""
+
+          for SHA in "${SHAS[@]}"; do
+            SHA=$(echo "$SHA" | xargs)
+            
+            # Check existence
+            if ! git cat-file -t "$SHA" > /dev/null 2>&1; then
+                echo "ERROR: Commit $SHA does not exist locally."
+                exit 1
+            fi
+
+            # Get timestamp to find the oldest
+            TS=$(git show -s --format=%ct "$SHA")
+            if [ "$TS" -lt "$OLDEST_TIMESTAMP" ]; then
+                OLDEST_TIMESTAMP=$TS
+                # We want the parent of the oldest commit
+                START_POINT="${SHA}^" 
+            fi
+          done
+
+          echo "Starting Interactive Rebase from: $START_POINT"
+          
+          # 3. Export SHAs to an environment variable so the editor script can see them
+          export TARGET_SHAS="${SHAS[*]}"
+
+          # 4. Define the sequence editor
+          # This assumes the Todo list format is: "pick <short_sha> <message>"
+          # We iterate through our target SHAs, find their short version, and replace 'pick' with 'drop'
+          
+          export GIT_SEQUENCE_EDITOR='f() {
+            TODO_FILE="$1"
+            for full_sha in $TARGET_SHAS; do
+              # Get the short SHA that git rebase uses in the todo file (usually 7-11 chars)
+              # We use a loose match or calculate short sha
+              short_sha=$(git rev-parse --short "$full_sha")
+              
+              # Replace "pick <short_sha>" with "drop <short_sha>"
+              # We use sed to edit the file in place
+              sed -i "s/^pick $short_sha/drop $short_sha/" "$TODO_FILE"
+              
+              echo "Marked $short_sha for deletion (drop)."
+            done
+          }; f'
+
+          # 5. Execute Rebase
+          # If this fails (conflicts), it will exit due to set -e
+          if git rebase -i "$START_POINT"; then
+              echo "Rebase successful. Commits dropped."
+          else
+              echo "CRITICAL ERROR: Rebase failed due to conflicts."
+              echo "This usually happens if you delete a commit that subsequent commits rely on."
+              echo "Aborting rebase..."
+              git rebase --abort
+              exit 1
+          fi
+
+          echo "-------------------------------------"
+          echo "History rewritten. Force pushing..."
+          
+          # 6. Force Push
+          git push origin "$TARGET_BRANCH" --force
