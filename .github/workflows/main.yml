@@ -1,0 +1,62 @@
+name: Manual Git Terminal
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: 'Branch to checkout and modify'
+        required: true
+        default: 'floppy-new'
+        type: string
+      commands:
+        description: 'Commands to run (one per line)'
+        required: true
+        type: string
+        default: |
+          git status
+          git log -n 5 --oneline
+          # Add your commands below
+          # git commit --amend -m "New message"
+          # git push origin HEAD --force
+
+permissions:
+  contents: write
+
+jobs:
+  run-commands:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Target Branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch }}
+          fetch-depth: 0 # Get full history (needed for rebase/reset)
+
+      - name: Configure Git Identity
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+      - name: Execute Commands
+        env:
+          # We pass the input to an ENV variable to handle multiline/quotes safely
+          USER_COMMANDS: ${{ inputs.commands }}
+        run: |
+          echo "----------------------------------------"
+          echo "Preparing to execute commands on branch: ${{ inputs.target_branch }}"
+          echo "----------------------------------------"
+
+          # Create a shell script from the input
+          echo "$USER_COMMANDS" > run_commands.sh
+          chmod +x run_commands.sh
+
+          # Run the script and stop if any command fails
+          # We use 'bash -e' so it stops immediately on error
+          if bash -e run_commands.sh; then
+            echo "----------------------------------------"
+            echo "✅ All commands executed successfully."
+          else
+            echo "----------------------------------------"
+            echo "❌ A command failed. Workflow stopped."
+            exit 1
+          fi
