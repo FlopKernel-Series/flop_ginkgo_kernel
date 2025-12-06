@@ -725,9 +725,9 @@ KBUILD_CFLAGS	+= $(call cc-disable-warning, attribute-alias)
 ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
 KBUILD_CFLAGS   += -Os
 else
-KBUILD_CFLAGS   += -O3
+KBUILD_CFLAGS   += -O2
 ifeq ($(cc-name),clang)
-KBUILD_CFLAGS	+= -mcpu=cortex-a73 -mtune=cortex-a73
+KBUILD_CFLAGS	+= -mcpu=cortex-a73+crypto -mtune=cortex-a53
 
 ifdef CONFIG_LLVM_POLLY
 KBUILD_CFLAGS	+= -mllvm -polly \
@@ -913,7 +913,7 @@ ifdef CONFIG_THINLTO
 lto-clang-flags	:= -flto=thin -fsplit-lto-unit $(call cc-option,-funified-lto)
 
 # LLVM tunings
-KBUILD_LDFLAGS += -mllvm -inline-threshold=275
+KBUILD_LDFLAGS += -mllvm -inline-threshold=425
 # Identical Code Folding (Safe replacement for Machine Outliner)
 KBUILD_LDFLAGS += -Wl,--icf=all
 # -O3: Optimizes binary layout and lookup tables (Faster access, Smaller size).
@@ -1046,10 +1046,7 @@ KBUILD_CFLAGS += -fno-builtin-bcmp
 # change __FILE__ to the relative path from the srctree
 KBUILD_CFLAGS	+= $(call cc-option,-fmacro-prefix-map=$(srctree)/=)
 
-# -O3 makes code fast but huge. Huge code lags on low end soc.
-# We force limit unrolling to keep code small, fitting in the L1 Cache.
 KBUILD_CFLAGS += -fno-unroll-loops
-KBUILD_CFLAGS += -mllvm -unroll-count=2
 
 # Aligns to 32-byte cache lines. Zero-wait fetching.
 KBUILD_CFLAGS += -falign-functions=32
@@ -1083,7 +1080,7 @@ KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-loop-flatten)
 # 'Constraint Elimination' removes useless checks.
 KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-constraint-elimination)
 
-KBUILD_CFLAGS	+= $(call cc-option,-mllvm -unroll-threshold=150)
+KBUILD_CFLAGS	+= $(call cc-option,-mllvm -unroll-threshold=250)
 KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-partial-inlining)
 KBUILD_CFLAGS	+= $(call cc-option,-mllvm -force-vector-width=4)
 KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-interleaved-mem-accesses)
