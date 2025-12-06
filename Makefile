@@ -1068,6 +1068,7 @@ KBUILD_CFLAGS += -freciprocal-math -fno-signed-zeros
 
 # Groups global variables to reduce address calculation overhead.
 KBUILD_CFLAGS += -mglobal-merge
+KBUILD_CFLAGS += -mllvm -global-merge-on-const
 
 ifdef CONFIG_CC_IS_CLANG
 # Advanced Loop Transforms :
