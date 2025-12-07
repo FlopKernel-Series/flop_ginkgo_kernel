@@ -746,6 +746,9 @@ static inline u32 __bpf_prog_run_save_cb(const struct bpf_prog *prog,
 	u8 cb_saved[BPF_SKB_CB_LEN];
 	u32 res;
 
+	if (unlikely(!prog || !prog->bpf_func))
+		return 1;
+
 	if (unlikely(prog->cb_access)) {
 		memcpy(cb_saved, cb_data, sizeof(cb_saved));
 		memset(cb_data, 0, sizeof(cb_saved));
@@ -776,6 +779,9 @@ static inline u32 bpf_prog_run_clear_cb(const struct bpf_prog *prog,
 	u8 *cb_data = bpf_skb_cb(skb);
 	u32 res;
 
+	if (unlikely(!prog || !prog->bpf_func))
+		return 1;
+
 	if (unlikely(prog->cb_access))
 		memset(cb_data, 0, BPF_SKB_CB_LEN);
 
@@ -794,6 +800,8 @@ static __always_inline u32 bpf_prog_run_xdp(const struct bpf_prog *prog,
 	 * already takes rcu_read_lock() when fetching the program, so
 	 * it's not necessary here anymore.
 	 */
+	if (unlikely(!prog || !prog->bpf_func))
+		return XDP_PASS;
 	return BPF_PROG_RUN(prog, xdp);
 }
 

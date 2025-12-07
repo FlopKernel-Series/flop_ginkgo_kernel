@@ -17,6 +17,7 @@
 #include <linux/numa.h>
 #include <linux/wait.h>
 #include <linux/u64_stats_sync.h>
+#include <linux/uaccess.h>
 
 struct bpf_verifier_env;
 struct perf_event;
@@ -544,17 +545,27 @@ int bpf_prog_array_copy(struct bpf_prog_array *old_array,
 		struct bpf_prog *_prog;			\
 		struct bpf_prog_array *_array;		\
 		u32 _ret = 1;				\
+		u32 _cnt = 0;				\
 		preempt_disable();			\
 		rcu_read_lock();			\
 		_array = rcu_dereference(array);	\
 		if (unlikely(!_array))			\
 			goto _out;			\
 		_item = &_array->items[0];		\
-		while ((_prog = READ_ONCE(_item->prog))) {		\
+		while (_cnt < 64) {			\
+			if (unlikely(!_item || (unsigned long)_item < (unsigned long)_array || \
+			    (unsigned long)_item > (unsigned long)_array + PAGE_SIZE * 2)) \
+				break;			\
+			if (probe_kernel_read(&_prog, &_item->prog, sizeof(_prog))) \
+				break;			\
+			if (!_prog || (unsigned long)_prog < PAGE_SIZE || \
+			    ((unsigned long)_prog & 0xffff000000000000) == 0xdead000000000000) \
+				break;			\
 			if (set_cg_storage)		\
 				bpf_cgroup_storage_set(_item->cgroup_storage);	\
 			_ret &= func(_prog, ctx);	\
 			_item++;			\
+			_cnt++;				\
 		}					\
 _out:							\
 		rcu_read_unlock();			\
@@ -592,18 +603,28 @@ _out:							\
 		u32 ret;				\
 		u32 _ret = 1;				\
 		u32 _cn = 0;				\
+		u32 _cnt = 0;				\
 		preempt_disable();			\
 		rcu_read_lock();			\
 		_array = rcu_dereference(array);	\
 		if (unlikely(!_array))			\
 			goto _out_egress;		\
 		_item = &_array->items[0];		\
-		while ((_prog = READ_ONCE(_item->prog))) {		\
+		while (_cnt < 64) {			\
+			if (unlikely(!_item || (unsigned long)_item < (unsigned long)_array || \
+			    (unsigned long)_item > (unsigned long)_array + PAGE_SIZE * 2)) \
+				break;			\
+			if (probe_kernel_read(&_prog, &_item->prog, sizeof(_prog))) \
+				break;			\
+			if (!_prog || (unsigned long)_prog < PAGE_SIZE || \
+			    ((unsigned long)_prog & 0xffff000000000000) == 0xdead000000000000) \
+				break;			\
 			bpf_cgroup_storage_set(_item->cgroup_storage);	\
 			ret = func(_prog, ctx);		\
 			_ret &= (ret & 1);		\
 			_cn |= (ret & 2);		\
 			_item++;			\
+			_cnt++;				\
 		}					\
 _out_egress:						\
 		rcu_read_unlock();			\
