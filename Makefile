@@ -727,8 +727,8 @@ KBUILD_CFLAGS   += -Os
 else
 KBUILD_CFLAGS   += -O2
 ifeq ($(cc-name),clang)
-KBUILD_CFLAGS += -mcpu=cortex-a73+crc+crypto -mtune=cortex-a73 -march=armv8-a+crc+crypto 
-KBUILD_AFLAGS += -mcpu=cortex-a73+crc+crypto -mtune=cortex-a73 -march=armv8-a+crc+crypto 
+KBUILD_CFLAGS += -mcpu=cortex-a73+crc+crypto -mtune=cortex-a53 -march=armv8-a+crc+crypto 
+KBUILD_AFLAGS += -mcpu=cortex-a73+crc+crypto -mtune=cortex-a53 -march=armv8-a+crc+crypto 
 
 ifdef CONFIG_LLVM_POLLY
 KBUILD_CFLAGS	+= -mllvm -polly \
@@ -921,9 +921,9 @@ ifdef CONFIG_THINLTO
 lto-clang-flags	:= -flto=thin -fsplit-lto-unit $(call cc-option,-funified-lto)
 
 # LLVM tunings
-LDFLAGS += -mllvm -inline-threshold=750
+LDFLAGS += -mllvm -inline-threshold=1000
 
-LDFLAGS += -mllvm -import-instr-limit=425
+LDFLAGS += -mllvm -import-instr-limit=600
 
 
 # Identical Code Folding (Safe replacement for Machine Outliner)
@@ -1058,7 +1058,7 @@ KBUILD_CFLAGS += -fno-builtin-bcmp
 # change __FILE__ to the relative path from the srctree
 KBUILD_CFLAGS	+= $(call cc-option,-fmacro-prefix-map=$(srctree)/=)
 
-KBUILD_CFLAGS += -fno-unroll-loops
+KBUILD_CFLAGS += -funroll-loops
 
 # Aligns to 32-byte cache lines. Zero-wait fetching.
 KBUILD_CFLAGS += -falign-functions=32
@@ -1093,7 +1093,7 @@ KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-loop-flatten)
 # 'Constraint Elimination' removes useless checks.
 KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-constraint-elimination)
 
-KBUILD_CFLAGS	+= $(call cc-option,-mllvm -unroll-threshold=300)
+KBUILD_CFLAGS	+= $(call cc-option,-mllvm -unroll-threshold=400)
 KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-partial-inlining)
 KBUILD_CFLAGS	+= $(call cc-option,-mllvm -force-vector-width=4)
 KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-interleaved-mem-accesses)
