@@ -727,7 +727,8 @@ KBUILD_CFLAGS   += -Os
 else
 KBUILD_CFLAGS   += -O2
 ifeq ($(cc-name),clang)
-KBUILD_CFLAGS	+= -mcpu=cortex-a73+crypto -mtune=cortex-a53
+KBUILD_CFLAGS += -mcpu=cortex-a73+crc+crypto -mtune=cortex-a73 -march=armv8-a+crc+crypto 
+KBUILD_AFLAGS += -mcpu=cortex-a73+crc+crypto -mtune=cortex-a73 -march=armv8-a+crc+crypto 
 
 ifdef CONFIG_LLVM_POLLY
 KBUILD_CFLAGS	+= -mllvm -polly \
