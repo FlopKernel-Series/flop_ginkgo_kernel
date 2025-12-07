@@ -913,7 +913,10 @@ ifdef CONFIG_THINLTO
 lto-clang-flags	:= -flto=thin -fsplit-lto-unit $(call cc-option,-funified-lto)
 
 # LLVM tunings
-KBUILD_LDFLAGS += -mllvm -inline-threshold=425
+KBUILD_LDFLAGS += -mllvm -inline-threshold=500
+
+
+
 # Identical Code Folding (Safe replacement for Machine Outliner)
 KBUILD_LDFLAGS += -Wl,--icf=all
 # -O3: Optimizes binary layout and lookup tables (Faster access, Smaller size).
