@@ -731,12 +731,19 @@ KBUILD_CFLAGS	+= -mcpu=cortex-a73+crypto -mtune=cortex-a53
 
 ifdef CONFIG_LLVM_POLLY
 KBUILD_CFLAGS	+= -mllvm -polly \
-		   -mllvm -polly-run-dce \
-		   -mllvm -polly-run-inliner \
-		   -mllvm -polly-isl-arg=--no-schedule-serialize-sccs \
-		   -mllvm -polly-ast-use-context \
+		   -mllvm -polly-invariant-load-hoisting \
+		   -mllvm -polly-opt-simplify-deps=yes \
+		   -mllvm -polly-pattern-matching-based-opts=true \
+		   -mllvm -polly-tiling=true \
+		   -mllvm -polly-register-tiling=true \
+		   -mllvm -polly-enable-delicm=true \
+		   -mllvm -polly-enable-simplify=true \
 		   -mllvm -polly-vectorizer=stripmine \
-		   -mllvm -polly-invariant-load-hoisting
+		   -mllvm -polly-reschedule=1 \
+		   -mllvm -polly-stmt-granularity=scalar-indep \
+		   -mllvm -polly-postopts=1 \
+		   -mllvm -polly-dependences-computeout=0 \
+		   -mllvm -polly-isl-arg=--no-schedule-serialize-sccs
 endif
 endif
 endif
