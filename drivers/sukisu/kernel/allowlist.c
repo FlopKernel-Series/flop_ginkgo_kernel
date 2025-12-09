@@ -25,15 +25,15 @@
 #include "allowlist.h"
 #include "manager.h"
 #include "kernel_compat.h"
-#ifndef CONFIG_KSU_SUSFS
-#include "syscall_hook_manager.h"
-#endif // #ifndef CONFIG_KSU_SUSFS
+#ifdef CONFIG_KSU_SYSCALL_HOOK
+#include "syscall_handler.h"
+#endif
 
 #define FILE_MAGIC 0x7f4b5355 // ' KSU', u32
 #define FILE_FORMAT_VERSION 3 // u32
 
 #define KSU_APP_PROFILE_PRESERVE_UID 9999 // NOBODY_UID
-#define KSU_DEFAULT_SELINUX_DOMAIN "u:r:su:s0"
+#define KSU_DEFAULT_SELINUX_DOMAIN "u:r:" KERNEL_SU_DOMAIN ":s0"
 
 static DEFINE_MUTEX(allowlist_mutex);
 
@@ -269,8 +269,10 @@ out:
 
 	if (persist) {
 		persistent_allow_list();
+#ifdef CONFIG_KSU_SYSCALL_HOOK
 		// FIXME: use a new flag
 		ksu_mark_running_process();
+#endif // #ifndef CONFIG_KSU_SUSFS
 	}
 
 	return result;
@@ -285,8 +287,8 @@ bool __ksu_is_allow_uid(uid_t uid)
 		return false;
 	}
 
-	if (likely(ksu_is_manager_uid_valid()) &&
-		unlikely(ksu_get_manager_uid() == uid)) {
+	if (likely(ksu_is_manager_appid_valid()) &&
+		unlikely(ksu_get_manager_appid() == uid % PER_USER_RANGE)) {
 		// manager is always allowed!
 		return true;
 	}
@@ -316,8 +318,8 @@ bool __ksu_is_allow_uid_for_current(uid_t uid)
 bool ksu_uid_should_umount(uid_t uid)
 {
 	struct app_profile profile = { .current_uid = uid };
-	if (likely(ksu_is_manager_uid_valid()) &&
-		unlikely(ksu_get_manager_uid() == uid)) {
+	if (likely(ksu_is_manager_appid_valid()) &&
+		unlikely(ksu_get_manager_appid() == uid % PER_USER_RANGE)) {
 		// we should not umount on manager!
 		return false;
 	}
@@ -504,8 +506,7 @@ exit:
 void ksu_prune_allowlist(bool (*is_uid_valid)(uid_t, char *, void *),
 			 void *data)
 {
-	struct perm_data *np = NULL;
-	struct perm_data *n = NULL;
+	struct perm_data *np, *n = NULL;
 
 	if (!ksu_boot_completed) {
 		pr_info("boot not completed, skip prune\n");

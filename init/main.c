@@ -78,6 +78,7 @@
 #include <linux/blkdev.h>
 #include <linux/elevator.h>
 #include <linux/sched_clock.h>
+#include <linux/jump_label.h>
 #include <linux/sched/task.h>
 #include <linux/sched/task_stack.h>
 #include <linux/context_tracking.h>
@@ -138,6 +139,8 @@ static char *ramdisk_execute_command;
 
 /* Workarounds */
 static bool legacy_timestamp_source = false;
+DEFINE_STATIC_KEY_FALSE(legacy_timestamp_key);
+EXPORT_SYMBOL(legacy_timestamp_key);
 
 static bool uname_bpf_spoof = false;
 
@@ -186,6 +189,11 @@ static int __init set_timestamp_source(char *val)
 		legacy_timestamp_source = tmp != 0;
 	}
 
+	if (legacy_timestamp_source)
+		static_branch_enable(&legacy_timestamp_key);
+	else
+		static_branch_disable(&legacy_timestamp_key);
+
 	return 0;
 }
 __setup("legacy_timestamp_source=", set_timestamp_source);
@@ -198,6 +206,8 @@ unsigned int is_legacy_timestamp(void)
 #ifdef CONFIG_MACH_XIAOMI_F9S
 /* Workaround: no_kernel_dimming */
 static bool no_kernel_dimming = false;
+DEFINE_STATIC_KEY_TRUE(uses_kernel_dimming_key);
+EXPORT_SYMBOL(uses_kernel_dimming_key);
 
 static int __init set_no_kernel_dimming(char *val)
 {
@@ -206,6 +216,11 @@ static int __init set_no_kernel_dimming(char *val)
 	if (get_option(&val, &tmp)) {
 		no_kernel_dimming = tmp != 0;
 	}
+
+	if (no_kernel_dimming)
+		static_branch_disable(&uses_kernel_dimming_key);
+	else
+		static_branch_enable(&uses_kernel_dimming_key);
 
 	return 0;
 }

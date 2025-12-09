@@ -1,37 +1,40 @@
 #include <linux/export.h>
 #include <linux/fs.h>
+#include <linux/printk.h>
 #include <linux/kobject.h>
 #include <linux/module.h>
-#include <linux/workqueue.h>
 #include <generated/utsrelease.h>
 #include <generated/compile.h>
 #include <linux/version.h> /* LINUX_VERSION_CODE, KERNEL_VERSION macros */
 
 #ifdef CONFIG_KSU_SUSFS
 #include <linux/susfs.h>
-#endif
+#endif // #ifdef CONFIG_KSU_SUSFS
 
 #include "allowlist.h"
-#include "ksu.h"
+#include "arch.h"
 #include "feature.h"
 #include "klog.h" // IWYU pragma: keep
+#include "ksu.h"
 #include "throne_tracker.h"
-#ifndef CONFIG_KSU_SUSFS
-#include "syscall_hook_manager.h"
+#ifdef CONFIG_KSU_SYSCALL_HOOK
+#include "syscall_handler.h"
+#endif // #ifndef CONFIG_KSU_SUSFS
+#if defined(CONFIG_KSU_MANUAL_HOOK) || defined(CONFIG_KSU_SUSFS)
+#include "setuid_hook.h"
+#include "sucompat.h"
 #endif
 #include "ksud.h"
 #include "supercalls.h"
+#include "ksu.h"
+
+struct cred* ksu_cred;
+
+extern void __init ksu_lsm_hook_init(void);
 
 #include "sulog.h"
 #include "throne_comm.h"
 #include "dynamic_manager.h"
-
-static struct workqueue_struct *ksu_workqueue;
-
-bool ksu_queue_work(struct work_struct *work)
-{
-	return queue_work(ksu_workqueue, work);
-}
 
 void sukisu_custom_config_init(void)
 {
@@ -49,9 +52,11 @@ void sukisu_custom_config_exit(void)
 
 int __init kernelsu_init(void)
 {
+#ifndef DDK_ENV
 	pr_info("Initialized on: %s (%s) with driver version: %u\n",
 		UTS_RELEASE, UTS_MACHINE, KSU_VERSION);
-		
+#endif
+
 #ifdef CONFIG_KSU_DEBUG
 	pr_alert("*************************************************************");
 	pr_alert("**	 NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE	**");
@@ -62,17 +67,27 @@ int __init kernelsu_init(void)
 	pr_alert("*************************************************************");
 #endif
 
-	ksu_feature_init();
+	ksu_cred = prepare_creds();
+	if (!ksu_cred) {
+		pr_err("prepare cred failed!\n");
+	}
 
-	ksu_lsm_hook_init();
+	ksu_feature_init();
 
 	ksu_supercalls_init();
 
 	sukisu_custom_config_init();
 
+#ifdef CONFIG_KSU_SYSCALL_HOOK
 	ksu_syscall_hook_manager_init();
+#endif
 
-	ksu_workqueue = alloc_ordered_workqueue("kernelsu_work_queue", 0);
+	ksu_lsm_hook_init();
+
+#if defined(CONFIG_KSU_MANUAL_HOOK) || defined(CONFIG_KSU_SUSFS)
+	ksu_setuid_hook_init();
+	ksu_sucompat_init();
+#endif
 
 	ksu_allowlist_init();
 
@@ -80,11 +95,11 @@ int __init kernelsu_init(void)
 
 #ifdef CONFIG_KSU_SUSFS
 	susfs_init();
-#endif
+#endif // #ifdef CONFIG_KSU_SUSFS
 
-#if defined(CONFIG_KPROBES) && !defined(CONFIG_KSU_SUSFS)
+#ifndef CONFIG_KSU_SUSFS
 	ksu_ksud_init();
-#endif
+#endif // #ifndef CONFIG_KSU_SUSFS
 
 #ifdef MODULE
 #ifndef CONFIG_KSU_DEBUG
@@ -94,28 +109,39 @@ int __init kernelsu_init(void)
 	return 0;
 }
 
+#if defined(CONFIG_KSU_SYSCALL_HOOK) || defined(CONFIG_KSU_SUSFS)
 extern void ksu_observer_exit(void);
+#endif
+
 void kernelsu_exit(void)
 {
 	ksu_allowlist_exit();
 
-	ksu_observer_exit();
-
 	ksu_throne_tracker_exit();
 
-	destroy_workqueue(ksu_workqueue);
-
-#if defined(CONFIG_KPROBES) && !defined(CONFIG_KSU_SUSFS)
-	ksu_ksud_exit();
+#if defined(CONFIG_KSU_SYSCALL_HOOK) || defined(CONFIG_KSU_SUSFS)
+	ksu_observer_exit();
 #endif
-
+#ifndef CONFIG_KSU_SUSFS
+	ksu_ksud_exit();
+#endif // #ifndef CONFIG_KSU_SUSFS
+#ifdef CONFIG_KSU_SYSCALL_HOOK
 	ksu_syscall_hook_manager_exit();
+#endif
+#if defined(CONFIG_KSU_MANUAL_HOOK) || defined(CONFIG_KSU_SUSFS)
+	ksu_sucompat_exit();
+	ksu_setuid_hook_exit();
+#endif
 
 	sukisu_custom_config_exit();
 
 	ksu_supercalls_exit();
-	
+
 	ksu_feature_exit();
+
+	if (ksu_cred) {
+		put_cred(ksu_cred);
+	}
 }
 
 module_init(kernelsu_init);

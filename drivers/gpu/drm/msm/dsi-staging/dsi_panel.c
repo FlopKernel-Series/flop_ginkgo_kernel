@@ -968,7 +968,7 @@ static u32 dsi_panel_get_backlight(struct dsi_panel *panel)
 enum msm_dim_layer_type dsi_panel_update_dimlayer(struct dsi_panel *panel,
 						  enum msm_dim_layer_type type)
 {
-	if (!is_device_f9s() || !uses_kernel_dimming()) {
+	if (!is_device_f9s() || !uses_kernel_dimming_fast()) {
 		return panel->dimlayer_type;
 	}
 
@@ -2875,7 +2875,7 @@ static int dsi_panel_parse_bl_config(struct dsi_panel *panel)
 		"qcom,mdss-dsi-bl-inverted-dbv");
 
 #ifdef CONFIG_MACH_XIAOMI_F9S
-	if (uses_kernel_dimming()) {
+	if (uses_kernel_dimming_fast()) {
 		rc = utils->read_u32(utils->data, "qcom,disp-doze-lbm-backlight",
 					&val);
 		if (rc) {

@@ -5377,7 +5377,7 @@ static int sde_crtc_global_dim_atomic_check(struct sde_crtc_state *cstate,
 	 * at this stage so it will dim only layers below FOD layer.
 	 * FOD and all above layers will not be dimmed.
 	 */
-	if (is_device_f9s() && uses_kernel_dimming()) {
+	if (is_device_f9s() && uses_kernel_dimming_fast()) {
 		for (i = 0; i < cnt; i++)
 			if (sde_plane_is_fod_layer(pstates[i].drm_pstate))
 				break;

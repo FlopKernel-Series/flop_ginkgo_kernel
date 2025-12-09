@@ -2,14 +2,20 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/uaccess.h>
+#include <linux/slab.h>
 #include <linux/workqueue.h>
+#include <linux/task_work.h>
 #include <linux/version.h>
-#include "ksu.h"
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+#include <linux/sched/task.h>
+#else
+#include <linux/sched.h>
+#endif
+#include <linux/pid.h>
 
 #include "klog.h"
-#include "ksu.h"
-#include "kernel_compat.h"
 #include "throne_comm.h"
+#include "ksu.h"
 
 #define PROC_UID_SCANNER "ksu_uid_scanner"
 #define UID_SCANNER_STATE_FILE "/data/adb/ksu/.uid_scanner"
@@ -17,8 +23,7 @@
 static struct proc_dir_entry *proc_entry = NULL;
 static struct workqueue_struct *scanner_wq = NULL;
 static struct work_struct scan_work;
-static struct work_struct ksu_state_save_work;
-static struct work_struct ksu_state_load_work;
+
 
 // Signal userspace to rescan
 static bool need_rescan = false;
@@ -44,65 +49,118 @@ void ksu_handle_userspace_update(void)
 	pr_info("userspace uid list updated\n");
 }
 
-static void do_save_throne_state(struct work_struct *work)
+static void do_save_throne_state(struct callback_head *_cb)
 {
 	struct file *fp;
 	char state_char = ksu_uid_scanner_enabled ? '1' : '0';
 	loff_t off = 0;
+	const struct cred *saved = override_creds(ksu_cred);
 
-	fp = ksu_filp_open_compat(UID_SCANNER_STATE_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	fp = filp_open(UID_SCANNER_STATE_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 	if (IS_ERR(fp)) {
 		pr_err("save_throne_state create file failed: %ld\n", PTR_ERR(fp));
-		return;
+		goto revert;
 	}
 
-	if (ksu_kernel_write_compat(fp, &state_char, sizeof(state_char), &off) != sizeof(state_char)) {
+	if (kernel_write(fp, &state_char, sizeof(state_char), &off) != sizeof(state_char)) {
 		pr_err("save_throne_state write failed\n");
-		goto exit;
+		goto close_file;
 	}
 
 	pr_info("throne state saved: %s\n", ksu_uid_scanner_enabled ? "enabled" : "disabled");
 
-exit:
+close_file:
 	filp_close(fp, 0);
+revert:
+	revert_creds(saved);
+	kfree(_cb);
 }
 
-void do_load_throne_state(struct work_struct *work)
+static void do_load_throne_state(struct callback_head *_cb)
 {
 	struct file *fp;
 	char state_char;
 	loff_t off = 0;
 	ssize_t ret;
+	const struct cred *saved = override_creds(ksu_cred);
 
-	fp = ksu_filp_open_compat(UID_SCANNER_STATE_FILE, O_RDONLY, 0);
+	fp = filp_open(UID_SCANNER_STATE_FILE, O_RDONLY, 0);
 	if (IS_ERR(fp)) {
 		pr_info("throne state file not found, using default: disabled\n");
 		ksu_uid_scanner_enabled = false;
-		return;
+		goto revert;
 	}
 
-	ret = ksu_kernel_read_compat(fp, &state_char, sizeof(state_char), &off);
+	ret = kernel_read(fp, &state_char, sizeof(state_char), &off);
 	if (ret != sizeof(state_char)) {
 		pr_err("load_throne_state read err: %zd\n", ret);
 		ksu_uid_scanner_enabled = false;
-		goto exit;
+		goto close_file;
 	}
 
 	ksu_uid_scanner_enabled = (state_char == '1');
 	pr_info("throne state loaded: %s\n", ksu_uid_scanner_enabled ? "enabled" : "disabled");
 
-exit:
+close_file:
 	filp_close(fp, 0);
+revert:
+	revert_creds(saved);
+	kfree(_cb);
 }
 
 bool ksu_throne_comm_load_state(void)
 {
-	return ksu_queue_work(&ksu_state_load_work);
+	struct task_struct *tsk;
+	struct callback_head *cb;
+
+	tsk = get_pid_task(find_vpid(1), PIDTYPE_PID);
+	if (!tsk) {
+		pr_err("load_throne_state find init task err\n");
+		return false;
+	}
+
+	cb = kzalloc(sizeof(*cb), GFP_KERNEL);
+	if (!cb) {
+		pr_err("load_throne_state alloc cb err\n");
+		goto put_task;
+	}
+	cb->func = do_load_throne_state;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+	task_work_add(tsk, cb, TWA_RESUME);
+#else
+	task_work_add(tsk, cb, true);
+#endif
+
+put_task:
+	put_task_struct(tsk);
+	return true;
 }
 
 void ksu_throne_comm_save_state(void)
 {
-	ksu_queue_work(&ksu_state_save_work);
+	struct task_struct *tsk;
+	struct callback_head *cb;
+
+	tsk = get_pid_task(find_vpid(1), PIDTYPE_PID);
+	if (!tsk) {
+		pr_err("save_throne_state find init task err\n");
+		return;
+	}
+
+	cb = kzalloc(sizeof(*cb), GFP_KERNEL);
+	if (!cb) {
+		pr_err("save_throne_state alloc cb err\n");
+		goto put_task;
+	}
+	cb->func = do_save_throne_state;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+	task_work_add(tsk, cb, TWA_RESUME);
+#else
+	task_work_add(tsk, cb, true);
+#endif
+
+put_task:
+	put_task_struct(tsk);
 }
 
 static int uid_scanner_show(struct seq_file *m, void *v)
@@ -202,14 +260,29 @@ void ksu_throne_comm_exit(void)
 	pr_info("throne communication cleaned up\n");
 }
 
-int ksu_uid_init(void)
-{
-	INIT_WORK(&ksu_state_save_work, do_save_throne_state);
-	INIT_WORK(&ksu_state_load_work, do_load_throne_state);
-	return 0;
-}
-
 void ksu_uid_exit(void)
 {
-	do_save_throne_state(NULL);
+	struct task_struct *tsk;
+	struct callback_head *cb;
+
+	tsk = get_pid_task(find_vpid(1), PIDTYPE_PID);
+	if (!tsk) {
+		pr_err("save_throne_state find init task err\n");
+		return;
+	}
+
+	cb = kzalloc(sizeof(*cb), GFP_KERNEL);
+	if (!cb) {
+		pr_err("save_throne_state alloc cb err\n");
+		goto put_task;
+	}
+	cb->func = do_save_throne_state;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+	task_work_add(tsk, cb, TWA_RESUME);
+#else
+	task_work_add(tsk, cb, true);
+#endif
+
+put_task:
+	put_task_struct(tsk);
 }

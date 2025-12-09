@@ -4428,7 +4428,7 @@ static void _sde_plane_install_properties(struct drm_plane *plane,
 	psde->catalog = catalog;
 
 // #ifndef CONFIG_MACH_XIAOMI_F9S
-	if (is_device_c3j() || (is_device_f9s() && !uses_kernel_dimming())) {
+	if (is_device_c3j() || (is_device_f9s() && !uses_kernel_dimming_fast())) {
 		if (sde_is_custom_client()) {
 			if (catalog->mixer_count &&
 					catalog->mixer[0].sblk->maxblendstages) {
@@ -4911,7 +4911,7 @@ static int sde_plane_atomic_set_property(struct drm_plane *plane,
 	} else {
 		pstate = to_sde_plane_state(state);
 #ifdef CONFIG_MACH_XIAOMI_F9S
-		if (uses_kernel_dimming()) {
+		if (uses_kernel_dimming_fast()) {
 			idx = msm_property_index(&psde->property_info,
 					property);
 			if (idx == PLANE_PROP_ZPOS) {
@@ -4934,7 +4934,7 @@ static int sde_plane_atomic_set_property(struct drm_plane *plane,
 				&pstate->property_state, property, val);
 		if (!ret) {
 // #ifndef CONFIG_MACH_XIAOMI_F9S
-			if (is_device_c3j() || (is_device_f9s() && !uses_kernel_dimming())) {
+			if (is_device_c3j() || (is_device_f9s() && !uses_kernel_dimming_fast())) {
 				idx = msm_property_index(&psde->property_info,
 						property);
 			}
