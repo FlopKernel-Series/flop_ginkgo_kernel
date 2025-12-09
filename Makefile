@@ -921,15 +921,17 @@ ifdef CONFIG_THINLTO
 lto-clang-flags	:= -flto=thin -fsplit-lto-unit $(call cc-option,-funified-lto)
 
 # LLVM tunings
-LDFLAGS += -mllvm -inline-threshold=1200
+LDFLAGS += -mllvm -inline-threshold=1500
 
-LDFLAGS += -mllvm -import-instr-limit=800
+LDFLAGS += -mllvm -import-instr-limit=600
 
 
 # Identical Code Folding (Safe replacement for Machine Outliner)
 KBUILD_LDFLAGS += -Wl,--icf=all
 # -O3: Optimizes binary layout and lookup tables (Faster access, Smaller size).
 KBUILD_LDFLAGS += -Wl,-O3
+# Force LTO engine to use O3 aggression
+KBUILD_LDFLAGS += -Wl,--lto-O3
 # Tells LTO we have the full source, allowing deeper internal optimization.
 KBUILD_LDFLAGS += -mllvm -thinlto-assume-complete-module
 else
@@ -1063,6 +1065,10 @@ KBUILD_CFLAGS += -funroll-loops
 # Aligns to 32-byte cache lines. Zero-wait fetching.
 KBUILD_CFLAGS += -falign-functions=32
 
+# Remove Unwind Tables
+KBUILD_CFLAGS   += -fno-unwind-tables
+KBUILD_CFLAGS   += -fno-asynchronous-unwind-tables
+
 # Moves cold code (error handling) away from hot loops.
 # This keeps the instruction cache clean for active code, reducing lag.
 KBUILD_CFLAGS	+= $(call cc-option,-fsplit-machine-functions)
@@ -1138,6 +1144,9 @@ KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-ext-tsp-block-placement)
 
 # Allows the instruction combiner to merge operations involving memory loads by verifying they are safe.
 KBUILD_CFLAGS += $(call cc-option,-mllvm -combiner-global-alias-analysis)
+
+# Merge identical functions (De-duplication). 
+KBUILD_CFLAGS += -mllvm -mergefunc-use-aliases
 
 endif
 
