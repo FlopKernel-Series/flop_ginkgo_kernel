@@ -38,6 +38,7 @@
 #include "feature.h"
 #include "klog.h" // IWYU pragma: keep
 #include "manager.h"
+#include "kernel_compat.h"
 #include "selinux/selinux.h"
 #include "seccomp_cache.h"
 #include "supercalls.h"

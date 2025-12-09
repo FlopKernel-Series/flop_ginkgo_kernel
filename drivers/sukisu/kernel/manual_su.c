@@ -8,6 +8,7 @@
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/binfmts.h>
+#include <linux/random.h>
 
 #include "manual_su.h"
 #include "ksu.h"
