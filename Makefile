@@ -921,9 +921,9 @@ ifdef CONFIG_THINLTO
 lto-clang-flags	:= -flto=thin -fsplit-lto-unit $(call cc-option,-funified-lto)
 
 # LLVM tunings
-LDFLAGS += -mllvm -inline-threshold=2200
+LDFLAGS += -mllvm -inline-threshold=2550
 
-LDFLAGS += -mllvm -import-instr-limit=800
+LDFLAGS += -mllvm -import-instr-limit=1050
 
 
 # Identical Code Folding (Safe replacement for Machine Outliner)
