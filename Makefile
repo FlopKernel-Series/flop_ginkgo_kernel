@@ -921,9 +921,9 @@ ifdef CONFIG_THINLTO
 lto-clang-flags	:= -flto=thin -fsplit-lto-unit $(call cc-option,-funified-lto)
 
 # LLVM tunings
-LDFLAGS += -mllvm -inline-threshold=1600
+LDFLAGS += -mllvm -inline-threshold=2000
 
-LDFLAGS += -mllvm -import-instr-limit=850
+LDFLAGS += -mllvm -import-instr-limit=800
 
 
 # Identical Code Folding (Safe replacement for Machine Outliner)
@@ -1099,7 +1099,7 @@ KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-loop-flatten)
 # 'Constraint Elimination' removes useless checks.
 KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-constraint-elimination)
 
-KBUILD_CFLAGS	+= $(call cc-option,-mllvm -unroll-threshold=425)
+KBUILD_CFLAGS	+= $(call cc-option,-mllvm -unroll-threshold=500)
 KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-partial-inlining)
 KBUILD_CFLAGS	+= $(call cc-option,-mllvm -force-vector-width=4)
 KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-interleaved-mem-accesses)
