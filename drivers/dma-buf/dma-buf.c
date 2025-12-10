@@ -34,19 +34,15 @@
 #include <linux/poll.h>
 #include <linux/reservation.h>
 #include <linux/mm.h>
-#include <linux/kernel.h>
-#include <linux/atomic.h>
+#include <linux/mount.h>
 #include <linux/sched/signal.h>
 #include <linux/fdtable.h>
 #include <linux/list_sort.h>
 #include <linux/hashtable.h>
-#include <linux/mount.h>
 #include <linux/dcache.h>
 
 #include <uapi/linux/dma-buf.h>
 #include <uapi/linux/magic.h>
-
-static atomic_long_t name_counter;
 
 static inline int is_dma_buf_file(struct file *);
 
@@ -410,6 +406,21 @@ out_unlock:
 	return ret;
 }
 
+static long dma_buf_get_name(struct dma_buf *dmabuf, char __user *buf)
+{
+	const char *name = "";
+	long ret = 0;
+
+	mutex_lock(&dmabuf->lock);
+	if (dmabuf->name)
+		name = dmabuf->name;
+	if (copy_to_user(buf, name, strlen(name) + 1))
+		ret = -EFAULT;
+	mutex_unlock(&dmabuf->lock);
+
+	return ret;
+}
+
 static long dma_buf_ioctl(struct file *file,
 			  unsigned int cmd, unsigned long arg)
 {
@@ -457,8 +468,12 @@ static long dma_buf_ioctl(struct file *file,
 
 		return ret;
 
-	case DMA_BUF_SET_NAME:
+	case DMA_BUF_SET_NAME_A:
+	case DMA_BUF_SET_NAME_B:
 		return dma_buf_set_name(dmabuf, (const char __user *)arg);
+
+	case DMA_BUF_GET_NAME:
+		return dma_buf_get_name(dmabuf, (char __user *)arg);
 
 	default:
 		return -ENOTTY;
@@ -591,9 +606,7 @@ struct dma_buf *dma_buf_export(const struct dma_buf_export_info *exp_info)
 	struct reservation_object *resv = exp_info->resv;
 	struct file *file;
 	size_t alloc_size = sizeof(struct dma_buf);
-	char *bufname;
 	int ret;
-	long cnt;
 
 	if (!exp_info->resv)
 		alloc_size += sizeof(struct reservation_object);
@@ -615,17 +628,15 @@ struct dma_buf *dma_buf_export(const struct dma_buf_export_info *exp_info)
 	if (!try_module_get(exp_info->owner))
 		return ERR_PTR(-ENOENT);
 
-	cnt = atomic_long_inc_return(&name_counter);
-	bufname = kasprintf(GFP_KERNEL, "dmabuf%ld", cnt);
-	if (!bufname) {
-		ret = -ENOMEM;
-		goto err_module;
-	}
-
+	/*
+	 * dma_buf struct must be allocated with kzalloc to zero out all the
+	 * fields. Otherwise dmabuf->name field may leak kernel data when the
+	 * name is unspecified.
+	 */
 	dmabuf = kzalloc(alloc_size, GFP_KERNEL);
 	if (!dmabuf) {
 		ret = -ENOMEM;
-		goto err_name;
+		goto err_module;
 	}
 
 	dmabuf->priv = exp_info->priv;
@@ -637,8 +648,6 @@ struct dma_buf *dma_buf_export(const struct dma_buf_export_info *exp_info)
 	init_waitqueue_head(&dmabuf->poll);
 	dmabuf->cb_excl.poll = dmabuf->cb_shared.poll = &dmabuf->poll;
 	dmabuf->cb_excl.active = dmabuf->cb_shared.active = 0;
-	dmabuf->buf_name = bufname;
-	dmabuf->name = bufname;
 	dmabuf->ktime = ktime_get();
 	atomic_set(&dmabuf->dent_count, 1);
 
@@ -653,8 +662,6 @@ struct dma_buf *dma_buf_export(const struct dma_buf_export_info *exp_info)
 		ret = PTR_ERR(file);
 		goto err_dmabuf;
 	}
-
-	file->f_mode |= FMODE_LSEEK;
 	dmabuf->file = file;
 
 	mutex_init(&dmabuf->lock);
@@ -671,8 +678,6 @@ struct dma_buf *dma_buf_export(const struct dma_buf_export_info *exp_info)
 
 err_dmabuf:
 	kfree(dmabuf);
-err_name:
-	kfree(bufname);
 err_module:
 	module_put(exp_info->owner);
 	return ERR_PTR(ret);
@@ -1379,9 +1384,8 @@ static int dma_buf_debug_show(struct seq_file *s, void *unused)
 		return ret;
 
 	seq_puts(s, "\nDma-buf Objects:\n");
-	seq_printf(s, "%-8s\t%-8s\t%-8s\t%-8s\t%-12s\t%-s\t%-8s\n",
-		   "size", "flags", "mode", "count", "exp_name",
-		   "buf name", "ino");
+	seq_printf(s, "%-8s\t%-8s\t%-8s\t%-8s\texp_name\t%-8s\n",
+		   "size", "flags", "mode", "count", "ino");
 
 	list_for_each_entry(buf_obj, &db_list.head, list_node) {
 		ret = mutex_lock_interruptible(&buf_obj->lock);
@@ -1392,11 +1396,11 @@ static int dma_buf_debug_show(struct seq_file *s, void *unused)
 			continue;
 		}
 
-		seq_printf(s, "%08zu\t%08x\t%08x\t%08ld\t%-12s\t%-s\t%8lu\t%s\n",
+		seq_printf(s, "%08zu\t%08x\t%08x\t%08ld\t%s\t%08lu\t%s\n",
 				buf_obj->size,
 				buf_obj->file->f_flags, buf_obj->file->f_mode,
 				file_count(buf_obj->file),
-				buf_obj->exp_name, buf_obj->buf_name,
+				buf_obj->exp_name,
 				file_inode(buf_obj->file)->i_ino,
 				buf_obj->name ?: "");
 
@@ -1507,7 +1511,7 @@ static void write_proc(struct seq_file *s, struct dma_proc *proc)
 
 		elapmstime = ktime_divns(elapmstime, MSEC_PER_SEC);
 		seq_printf(s, "%-8s\t%-8ld\t%-8lld\n",
-				dmabuf->buf_name,
+				dmabuf->name,
 				dmabuf->size / SZ_1K,
 				elapmstime);
 	}

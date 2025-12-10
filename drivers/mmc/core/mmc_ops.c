@@ -601,18 +601,8 @@ int __mmc_switch(struct mmc_card *card, u8 set, u8 index, u8 value,
 	    (timeout_ms > host->max_busy_timeout))
 		use_r1b_resp = false;
 
-	cmd.opcode = MMC_SWITCH;
-	cmd.arg = (MMC_SWITCH_MODE_WRITE_BYTE << 24) |
-		  (index << 16) |
-		  (value << 8) |
-		  set;
-	cmd.flags = MMC_CMD_AC;
-	if (use_r1b_resp) {
-		cmd.flags |= MMC_RSP_SPI_R1B | MMC_RSP_R1B;
-		cmd.busy_timeout = timeout_ms;
-	} else {
-		cmd.flags |= MMC_RSP_SPI_R1 | MMC_RSP_R1;
-	}
+	mmc_prepare_switch(&cmd, index, value, set, timeout_ms,
+			   use_r1b_resp);
 
 	if (index == EXT_CSD_SANITIZE_START)
 		cmd.sanitize_busy = true;
@@ -1121,7 +1111,16 @@ int mmc_flush_cache(struct mmc_card *card)
 		err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
 				 EXT_CSD_FLUSH_CACHE, 1,
 				 MMC_CACHE_FLUSH_TIMEOUT_MS);
-		if (err)
+		if (err == -ETIMEDOUT) {
+			pr_err("%s: cache flush timeout\n",
+					mmc_hostname(card->host));
+			err = mmc_interrupt_hpi(card);
+			if (err) {
+				pr_err("%s: mmc_interrupt_hpi() failed (%d)\n",
+						mmc_hostname(card->host), err);
+				err = -ENODEV;
+			}
+		} else if (err) {
 			pr_err("%s: cache flush error %d\n",
 					mmc_hostname(card->host), err);
 		}

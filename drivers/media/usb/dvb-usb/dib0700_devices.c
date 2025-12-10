@@ -1678,10 +1678,10 @@ static int dib8096_set_param_override(struct dvb_frontend *fe)
 		return -EINVAL;
 	}
 
-	/** Update PLL if needed ratio **/
+	/* Update PLL if needed ratio */
 	state->dib8000_ops.update_pll(fe, &dib8090_pll_config_12mhz, fe->dtv_property_cache.bandwidth_hz / 1000, 0);
 
-	/** Get optimize PLL ratio to remove spurious **/
+	/* Get optimize PLL ratio to remove spurious */
 	pll_ratio = dib8090_compute_pll_parameters(fe);
 	if (pll_ratio == 17)
 		timf = 21387946;
@@ -1692,7 +1692,7 @@ static int dib8096_set_param_override(struct dvb_frontend *fe)
 	else
 		timf = 18179756;
 
-	/** Update ratio **/
+	/* Update ratio */
 	state->dib8000_ops.update_pll(fe, &dib8090_pll_config_12mhz, fe->dtv_property_cache.bandwidth_hz / 1000, pll_ratio);
 
 	state->dib8000_ops.ctrl_timf(fe, DEMOD_TIMF_SET, timf);
@@ -2423,7 +2423,12 @@ static int stk9090m_frontend_attach(struct dvb_usb_adapter *adap)
 
 	adap->fe_adap[0].fe = dvb_attach(dib9000_attach, &adap->dev->i2c_adap, 0x80, &stk9090m_config);
 
-	return adap->fe_adap[0].fe == NULL ?  -ENODEV : 0;
+	if (!adap->fe_adap[0].fe) {
+		release_firmware(state->frontend_firmware);
+		return -ENODEV;
+	}
+
+	return 0;
 }
 
 static int dib9090_tuner_attach(struct dvb_usb_adapter *adap)
@@ -2496,8 +2501,10 @@ static int nim9090md_frontend_attach(struct dvb_usb_adapter *adap)
 	dib9000_i2c_enumeration(&adap->dev->i2c_adap, 1, 0x20, 0x80);
 	adap->fe_adap[0].fe = dvb_attach(dib9000_attach, &adap->dev->i2c_adap, 0x80, &nim9090md_config[0]);
 
-	if (adap->fe_adap[0].fe == NULL)
+	if (!adap->fe_adap[0].fe) {
+		release_firmware(state->frontend_firmware);
 		return -ENODEV;
+	}
 
 	i2c = dib9000_get_i2c_master(adap->fe_adap[0].fe, DIBX000_I2C_INTERFACE_GPIO_3_4, 0);
 	dib9000_i2c_enumeration(i2c, 1, 0x12, 0x82);
@@ -2505,7 +2512,12 @@ static int nim9090md_frontend_attach(struct dvb_usb_adapter *adap)
 	fe_slave = dvb_attach(dib9000_attach, i2c, 0x82, &nim9090md_config[1]);
 	dib9000_set_slave_frontend(adap->fe_adap[0].fe, fe_slave);
 
-	return fe_slave == NULL ?  -ENODEV : 0;
+	if (!fe_slave) {
+		release_firmware(state->frontend_firmware);
+		return -ENODEV;
+	}
+
+	return 0;
 }
 
 static int nim9090md_tuner_attach(struct dvb_usb_adapter *adap)
@@ -3366,7 +3378,7 @@ static int novatd_sleep_override(struct dvb_frontend* fe)
 	return state->sleep(fe);
 }
 
-/**
+/*
  * novatd_frontend_attach - Nova-TD specific attach
  *
  * Nova-TD has GPIO0, 1 and 2 for LEDs. So do not fiddle with them except for

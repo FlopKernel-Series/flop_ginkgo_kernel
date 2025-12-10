@@ -977,7 +977,7 @@ static inline bool xfrm_sec_ctx_match(struct xfrm_sec_ctx *s1, struct xfrm_sec_c
 
 /* A struct encoding bundle of transformations to apply to some set of flow.
  *
- * dst->child points to the next element of bundle.
+ * xdst->child points to the next element of bundle.
  * dst->xfrm  points to an instanse of transformer.
  *
  * Due to unfortunate limitations of current routing cache, which we
@@ -993,6 +993,8 @@ struct xfrm_dst {
 		struct rt6_info		rt6;
 	} u;
 	struct dst_entry *route;
+	struct dst_entry *child;
+	struct dst_entry *path;
 	struct xfrm_policy *pols[XFRM_POLICY_TYPE_MAX];
 	int num_pols, num_xfrms;
 	u32 xfrm_genid;
@@ -1003,7 +1005,35 @@ struct xfrm_dst {
 	u32 path_cookie;
 };
 
+static inline struct dst_entry *xfrm_dst_path(const struct dst_entry *dst)
+{
 #ifdef CONFIG_XFRM
+	if (dst->xfrm) {
+		const struct xfrm_dst *xdst = (const struct xfrm_dst *) dst;
+
+		return xdst->path;
+	}
+#endif
+	return (struct dst_entry *) dst;
+}
+
+static inline struct dst_entry *xfrm_dst_child(const struct dst_entry *dst)
+{
+#ifdef CONFIG_XFRM
+	if (dst->xfrm) {
+		struct xfrm_dst *xdst = (struct xfrm_dst *) dst;
+		return xdst->child;
+	}
+#endif
+	return NULL;
+}
+
+#ifdef CONFIG_XFRM
+static inline void xfrm_dst_set_child(struct xfrm_dst *xdst, struct dst_entry *child)
+{
+	xdst->child = child;
+}
+
 static inline void xfrm_dst_destroy(struct xfrm_dst *xdst)
 {
 	xfrm_pols_put(xdst->pols, xdst->num_pols);
@@ -1702,12 +1732,13 @@ void xfrm_policy_walk_done(struct xfrm_policy_walk *walk, struct net *net);
 int xfrm_policy_insert(int dir, struct xfrm_policy *policy, int excl);
 struct xfrm_policy *xfrm_policy_bysel_ctx(struct net *net,
 					  const struct xfrm_mark *mark,
+					  u32 if_id,
 					  u8 type, int dir,
 					  struct xfrm_selector *sel,
 					  struct xfrm_sec_ctx *ctx, int delete,
 					  int *err);
 struct xfrm_policy *xfrm_policy_byid(struct net *net,
-				     const struct xfrm_mark *mark,
+				     const struct xfrm_mark *mark, u32 if_id,
 				     u8 type, int dir, u32 id, int delete,
 				     int *err);
 int xfrm_policy_flush(struct net *net, u8 type, bool task_valid);
@@ -1727,14 +1758,15 @@ int km_migrate(const struct xfrm_selector *sel, u8 dir, u8 type,
 	       const struct xfrm_migrate *m, int num_bundles,
 	       const struct xfrm_kmaddress *k,
 	       const struct xfrm_encap_tmpl *encap);
-struct xfrm_state *xfrm_migrate_state_find(struct xfrm_migrate *m, struct net *net);
+struct xfrm_state *xfrm_migrate_state_find(struct xfrm_migrate *m, struct net *net,
+						u32 if_id);
 struct xfrm_state *xfrm_state_migrate(struct xfrm_state *x,
 				      struct xfrm_migrate *m,
 				      struct xfrm_encap_tmpl *encap);
 int xfrm_migrate(const struct xfrm_selector *sel, u8 dir, u8 type,
 		 struct xfrm_migrate *m, int num_bundles,
 		 struct xfrm_kmaddress *k, struct net *net,
-		 struct xfrm_encap_tmpl *encap);
+		 struct xfrm_encap_tmpl *encap, u32 if_id);
 #endif
 
 int km_new_mapping(struct xfrm_state *x, xfrm_address_t *ipaddr, __be16 sport);
@@ -1910,12 +1942,14 @@ bool xfrm_dev_offload_ok(struct sk_buff *skb, struct xfrm_state *x);
 static inline bool xfrm_dst_offload_ok(struct dst_entry *dst)
 {
 	struct xfrm_state *x = dst->xfrm;
+	struct xfrm_dst *xdst;
 
 	if (!x || !x->type_offload)
 		return false;
 
-	if (x->xso.offload_handle && (x->xso.dev == dst->path->dev) &&
-	    !dst->child->xfrm)
+	xdst = (struct xfrm_dst *) dst;
+	if (x->xso.offload_handle && (x->xso.dev == xfrm_dst_path(dst)->dev) &&
+	    !xdst->child->xfrm)
 		return true;
 
 	return false;
@@ -2025,4 +2059,38 @@ static inline int xfrm_tunnel_check(struct sk_buff *skb, struct xfrm_state *x,
 
 	return 0;
 }
+
+extern const int xfrm_msg_min[XFRM_NR_MSGTYPES];
+extern const struct nla_policy xfrma_policy[XFRMA_MAX+1];
+
+struct xfrm_translator {
+	/* Allocate frag_list and put compat translation there */
+	int (*alloc_compat)(struct sk_buff *skb, const struct nlmsghdr *src);
+
+	/* Allocate nlmsg with 64-bit translaton of received 32-bit message */
+	struct nlmsghdr *(*rcv_msg_compat)(const struct nlmsghdr *nlh,
+			int maxtype, const struct nla_policy *policy,
+			struct netlink_ext_ack *extack);
+
+	/* Translate 32-bit user_policy from sockptr */
+	int (*xlate_user_policy_sockptr)(u8 **pdata32, int optlen);
+
+	struct module *owner;
+};
+
+#if IS_ENABLED(CONFIG_XFRM_USER_COMPAT)
+extern int xfrm_register_translator(struct xfrm_translator *xtr);
+extern int xfrm_unregister_translator(struct xfrm_translator *xtr);
+extern struct xfrm_translator *xfrm_get_translator(void);
+extern void xfrm_put_translator(struct xfrm_translator *xtr);
+#else
+static inline struct xfrm_translator *xfrm_get_translator(void)
+{
+	return NULL;
+}
+static inline void xfrm_put_translator(struct xfrm_translator *xtr)
+{
+}
+#endif
+
 #endif	/* _NET_XFRM_H */

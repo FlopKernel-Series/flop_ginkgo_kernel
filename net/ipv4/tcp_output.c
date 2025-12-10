@@ -62,6 +62,22 @@ int sysctl_tcp_tso_win_divisor __read_mostly = 3;
 /* By default, RFC2861 behavior.  */
 int sysctl_tcp_slow_start_after_idle __read_mostly = 1;
 
+/* Refresh clocks of a TCP socket,
+ * ensuring monotically increasing values.
+ */
+void tcp_mstamp_refresh(struct tcp_sock *tp)
+{
+	u64 val = tcp_clock_ns();
+
+	/* departure time for next data packet */
+	if (val > tp->tcp_wstamp_ns)
+		tp->tcp_wstamp_ns = val;
+
+	val = div_u64(val, NSEC_PER_USEC);
+	if (val > tp->tcp_mstamp)
+		tp->tcp_mstamp = val;
+}
+
 static bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
 			   int push_one, gfp_t gfp);
 
@@ -1112,6 +1128,7 @@ static int __tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 	if (skb->len != tcp_header_size) {
 		tcp_event_data_sent(tp, sk);
 		tp->data_segs_out += tcp_skb_pcount(skb);
+		tp->bytes_sent += skb->len - tcp_header_size;
 		tcp_internal_pacing(sk, skb);
 	}
 
@@ -2439,7 +2456,8 @@ bool tcp_schedule_loss_probe(struct sock *sk, bool advancing_rto)
 {
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	struct tcp_sock *tp = tcp_sk(sk);
-	u32 timeout, rto_delta_us;
+	u32 timeout, timeout_us, rto_delta_us;
+	int early_retrans;
 
 	/* Don't do any loss probe on a Fast Open connection before 3WHS
 	 * finishes.
@@ -2447,10 +2465,11 @@ bool tcp_schedule_loss_probe(struct sock *sk, bool advancing_rto)
 	if (tp->fastopen_rsk)
 		return false;
 
+	early_retrans = sock_net(sk)->ipv4.sysctl_tcp_early_retrans;
 	/* Schedule a loss probe in 2*RTT for SACK capable connections
 	 * in Open state, that are either limited by cwnd or application.
 	 */
-	if ((sysctl_tcp_early_retrans != 3 && sysctl_tcp_early_retrans != 4) ||
+	if ((early_retrans != 3 && early_retrans != 4) ||
 	    !tp->packets_out || !tcp_is_sack(tp) ||
 	    icsk->icsk_ca_state != TCP_CA_Open)
 		return false;
@@ -2464,11 +2483,12 @@ bool tcp_schedule_loss_probe(struct sock *sk, bool advancing_rto)
 	 * sample is available then probe after TCP_TIMEOUT_INIT.
 	 */
 	if (tp->srtt_us) {
-		timeout = usecs_to_jiffies(tp->srtt_us >> 2);
+		timeout_us = tp->srtt_us >> 2;
 		if (tp->packets_out == 1)
-			timeout += TCP_RTO_MIN;
+			timeout_us += tcp_rto_min_us(sk);
 		else
-			timeout += TCP_TIMEOUT_MIN;
+			timeout_us += TCP_TIMEOUT_MIN_US;
+		timeout = usecs_to_jiffies(timeout_us);
 	} else {
 		timeout = TCP_TIMEOUT_INIT;
 	}
@@ -2948,6 +2968,7 @@ start:
 	if (TCP_SKB_CB(skb)->tcp_flags & TCPHDR_SYN)
 		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPSYNRETRANS);
 	tp->total_retrans += segs;
+	tp->bytes_retrans += skb->len;
 
 	/* make sure skb->data is aligned on arches that require it
 	 * and check if ack-trimming & collapsing extended the headroom
@@ -2967,6 +2988,10 @@ start:
 	} else {
 		err = tcp_transmit_skb(sk, skb, 1, GFP_ATOMIC);
 	}
+
+	if (BPF_SOCK_OPS_TEST_FLAG(tp, BPF_SOCK_OPS_RETRANS_CB_FLAG))
+		tcp_call_bpf_3arg(sk, BPF_SOCK_OPS_RETRANS_CB,
+				  TCP_SKB_CB(skb)->seq, segs, err);
 
 	if (likely(!err)) {
 		TCP_SKB_CB(skb)->sacked |= TCPCB_EVER_RETRANS;
@@ -3139,7 +3164,9 @@ coalesce:
 			return;
 		}
 	} else {
-		skb = alloc_skb_fclone(MAX_TCP_HEADER, sk->sk_allocation);
+		skb = alloc_skb_fclone(MAX_TCP_HEADER,
+				       sk_gfp_mask(sk, GFP_ATOMIC |
+						       __GFP_NOWARN));
 		if (unlikely(!skb)) {
 			if (tskb)
 				goto coalesce;
@@ -3533,7 +3560,7 @@ int tcp_connect(struct sock *sk)
 	struct sk_buff *buff;
 	int err;
 
-	tcp_call_bpf(sk, BPF_SOCK_OPS_TCP_CONNECT_CB);
+	tcp_call_bpf(sk, BPF_SOCK_OPS_TCP_CONNECT_CB, 0, NULL);
 
 	if (inet_csk(sk)->icsk_af_ops->rebuild_header(sk))
 		return -EHOSTUNREACH; /* Routing failure or similar. */

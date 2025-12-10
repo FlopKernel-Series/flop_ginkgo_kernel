@@ -657,6 +657,35 @@ static int mmc_decode_ext_csd(struct mmc_card *card, u8 *ext_csd)
 	if (card->ext_csd.part_time < MMC_MIN_PART_SWITCH_TIME)
 		card->ext_csd.part_time = MMC_MIN_PART_SWITCH_TIME;
 
+	if (card->ext_csd.rev >= 7) {
+		/* Enhance Strobe is supported since v5.1 which rev should be
+		 * 8 but some eMMC devices can support it with rev 7. So handle
+		 * Enhance Strobe here.
+		 */
+		card->ext_csd.strobe_support = ext_csd[EXT_CSD_STROBE_SUPPORT];
+		card->ext_csd.cmdq_support = ext_csd[EXT_CSD_CMDQ_SUPPORT];
+		card->ext_csd.fw_version = ext_csd[EXT_CSD_FIRMWARE_VERSION];
+		pr_info("%s: eMMC FW version: 0x%02x\n",
+			mmc_hostname(card->host),
+			card->ext_csd.fw_version);
+		if (card->ext_csd.cmdq_support) {
+			/*
+			 * Queue Depth = N + 1,
+			 * see JEDEC JESD84-B51 section 7.4.19
+			 */
+			card->ext_csd.cmdq_depth =
+				ext_csd[EXT_CSD_CMDQ_DEPTH] + 1;
+			pr_info("%s: CMDQ supported: depth: %d\n",
+				mmc_hostname(card->host),
+				card->ext_csd.cmdq_depth);
+		}
+	} else {
+		card->ext_csd.cmdq_support = 0;
+		card->ext_csd.cmdq_depth = 0;
+		card->ext_csd.barrier_support = 0;
+		card->ext_csd.cache_flush_policy = 0;
+	}
+
 	/* eMMC v5 or later */
 	if (card->ext_csd.rev >= 7) {
 		memcpy(card->ext_csd.fwrev, &ext_csd[EXT_CSD_FIRMWARE_VERSION],
@@ -1033,10 +1062,12 @@ static int mmc_select_bus_width(struct mmc_card *card)
 	static const unsigned int ext_csd_bits[] = {
 		EXT_CSD_BUS_WIDTH_8,
 		EXT_CSD_BUS_WIDTH_4,
+		EXT_CSD_BUS_WIDTH_1,
 	};
 	static const unsigned int bus_widths[] = {
 		MMC_BUS_WIDTH_8,
 		MMC_BUS_WIDTH_4,
+		MMC_BUS_WIDTH_1,
 	};
 	struct mmc_host *host = card->host;
 	unsigned int idx, bus_width = 0;

@@ -115,7 +115,7 @@ static void mhi_time_async_cb(struct mhi_device *mhi_dev, u32 sequence,
 {
 	struct mhi_controller *mhi_cntrl = mhi_dev->mhi_cntrl;
 
-	MHI_LOG("Time response: seq:%llx local: %llu remote: %llu (ticks)\n",
+	MHI_LOG("Time response: seq:%x local: %llu remote: %llu (ticks)\n",
 		sequence, local_time, remote_time);
 }
 
@@ -124,7 +124,7 @@ static void mhi_time_us_async_cb(struct mhi_device *mhi_dev, u32 sequence,
 {
 	struct mhi_controller *mhi_cntrl = mhi_dev->mhi_cntrl;
 
-	MHI_LOG("Time response: seq:%llx local: %llu remote: %llu (us)\n",
+	MHI_LOG("Time response: seq:%x local: %llu remote: %llu (us)\n",
 		sequence, LOCAL_TICKS_TO_US(local_time),
 		REMOTE_TICKS_TO_US(remote_time));
 }
@@ -186,13 +186,13 @@ static ssize_t time_async_show(struct device *dev,
 
 	ret = mhi_get_remote_time(mhi_dev, seq, &mhi_time_async_cb);
 	if (ret) {
-		MHI_ERR("Failed to request time, seq:%llx, ret:%d\n", seq, ret);
+		MHI_ERR("Failed to request time, seq:%x, ret:%d\n", seq, ret);
 		return scnprintf(buf, PAGE_SIZE,
 				 "Request failed or feature unsupported\n");
 	}
 
 	return scnprintf(buf, PAGE_SIZE,
-			 "Requested time asynchronously with seq:%llx\n", seq);
+			 "Requested time asynchronously with seq:%x\n", seq);
 }
 static DEVICE_ATTR_RO(time_async);
 
@@ -210,13 +210,13 @@ static ssize_t time_us_async_show(struct device *dev,
 
 	ret = mhi_get_remote_time(mhi_dev, seq, &mhi_time_us_async_cb);
 	if (ret) {
-		MHI_ERR("Failed to request time, seq:%llx, ret:%d\n", seq, ret);
+		MHI_ERR("Failed to request time, seq:%x, ret:%d\n", seq, ret);
 		return scnprintf(buf, PAGE_SIZE,
 				 "Request failed or feature unsupported\n");
 	}
 
 	return scnprintf(buf, PAGE_SIZE,
-			 "Requested time asynchronously with seq:%llx\n", seq);
+			 "Requested time asynchronously with seq:%x\n", seq);
 }
 static DEVICE_ATTR_RO(time_us_async);
 
@@ -333,12 +333,24 @@ static const struct attribute_group mhi_sysfs_group = {
 	.attrs = mhi_sysfs_attrs,
 };
 
-void mhi_create_sysfs(struct mhi_controller *mhi_cntrl)
+int mhi_create_sysfs(struct mhi_controller *mhi_cntrl)
 {
-	sysfs_create_group(&mhi_cntrl->mhi_dev->dev.kobj, &mhi_sysfs_group);
-	if (mhi_cntrl->mhi_tsync)
-		sysfs_create_group(&mhi_cntrl->mhi_dev->dev.kobj,
-				   &mhi_tsync_group);
+	int ret;
+
+	ret = sysfs_create_group(&mhi_cntrl->mhi_dev->dev.kobj,
+				 &mhi_sysfs_group);
+	if (ret)
+		return ret;
+
+	if (mhi_cntrl->mhi_tsync) {
+		ret = sysfs_create_group(&mhi_cntrl->mhi_dev->dev.kobj,
+					 &mhi_tsync_group);
+		if (ret)
+			sysfs_remove_group(&mhi_cntrl->mhi_dev->dev.kobj,
+					   &mhi_sysfs_group);
+	}
+
+	return ret;
 }
 
 void mhi_destroy_sysfs(struct mhi_controller *mhi_cntrl)

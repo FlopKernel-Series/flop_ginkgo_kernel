@@ -463,10 +463,7 @@ static int find_group_orlov(struct super_block *sb, struct inode *parent,
 		int ret = -1;
 
 		if (qstr) {
-			if (ext4_hash_in_dirent(parent))
-				hinfo.hash_version = DX_HASH_SIPHASH;
-			else
-				hinfo.hash_version = DX_HASH_HALF_MD4;
+			hinfo.hash_version = DX_HASH_HALF_MD4;
 			hinfo.seed = sbi->s_hash_seed;
 			ext4fs_dirhash(parent, qstr->name, qstr->len, &hinfo);
 			grp = hinfo.hash;
@@ -521,6 +518,8 @@ static int find_group_orlov(struct super_block *sb, struct inode *parent,
 	if (min_inodes < 1)
 		min_inodes = 1;
 	min_clusters = avefreec - EXT4_CLUSTERS_PER_GROUP(sb)*flex_size / 4;
+	if (min_clusters < 0)
+		min_clusters = 0;
 
 	/*
 	 * Start looking in the flex group where we last allocated an
@@ -1098,8 +1097,8 @@ got:
 	inode->i_ino = ino + group * EXT4_INODES_PER_GROUP(sb);
 	/* This is the optimal IO size (for stat), not the fs block size */
 	inode->i_blocks = 0;
-	inode->i_mtime = inode->i_atime = inode->i_ctime = ei->i_crtime =
-						       current_time(inode);
+	inode->i_mtime = inode->i_atime = inode->i_ctime = current_time(inode);
+	ei->i_crtime = timespec64_to_timespec(inode->i_mtime);
 
 	memset(ei->i_data, 0, sizeof(ei->i_data));
 	ei->i_dir_start_lookup = 0;

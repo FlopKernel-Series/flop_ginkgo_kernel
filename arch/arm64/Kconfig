@@ -83,6 +83,8 @@ config ARM64
 	select GENERIC_TIME_VSYSCALL
 	select HANDLE_DOMAIN_IRQ
 	select HARDIRQS_SW_RESEND
+	select HAVE_MOVE_PMD
+	select HAVE_MOVE_PUD
 	select HAVE_ACPI_APEI if (ACPI && EFI)
 	select HAVE_ALIGNED_STRUCT_PAGE if SLUB
 	select HAVE_ARCH_AUDITSYSCALL
@@ -127,6 +129,7 @@ config ARM64
 	select HAVE_PERF_USER_STACK_DUMP
 	select HAVE_REGS_AND_STACK_ACCESS_API
 	select HAVE_RCU_TABLE_FREE
+	select HAVE_RCU_TABLE_INVALIDATE
 	select HAVE_SYSCALL_TRACEPOINTS
 	select HAVE_KPROBES
 	select HAVE_KRETPROBES
@@ -144,7 +147,7 @@ config ARM64
 	select SPARSE_IRQ
 	select SYSCTL_EXCEPTION_TRACE
 	select THREAD_INFO_IN_TASK
-	select ARCH_SUPPORTS_SPECULATIVE_PAGE_FAULT
+	select HAVE_ARCH_USERFAULTFD_MINOR if USERFAULTFD
 	help
 	  ARM 64-bit (AArch64) Linux support.
 
@@ -525,21 +528,21 @@ config ARM64_ERRATUM_1188873
 
 	  If unsure, say Y.
 
-config ARM64_ERRATUM_1742098
-	bool "Cortex-A57/A72: 1742098: ELR recorded incorrectly on interrupt taken between cryptographic instructions in a sequence"
-	depends on COMPAT
-	default y
+config ARM64_ERRATUM_1286807
+	bool "Cortex-A76: Modification of the translation table for a virtual address might lead to read-after-read ordering violation"
+	default n
+	select ARM64_WORKAROUND_REPEAT_TLBI
 	help
-	  This option removes the AES hwcap for aarch32 user-space to
-	  workaround erratum 1742098 on Cortex-A57 and Cortex-A72.
+	  This option adds workaround for ARM Cortex-A76 erratum 1286807
 
-	  Affected parts may corrupt the AES state if an interrupt is
-	  taken between a pair of AES instructions. These instructions
-	  are only present if the cryptography extensions are present.
-	  All software should have a fallback implementation for CPUs
-	  that don't implement the cryptography extensions.
-
-	  If unsure, say Y.
+	  On the affected Cortex-A76 cores (r0p0 to r3p0), if a virtual
+	  address for a cacheable mapping of a location is being
+	  accessed by a core while another core is remapping the virtual
+	  address to a new physical page using the recommended
+	  break-before-make sequence, then under very rare circumstances
+	  TLBI+DSB completes before a read using the translation being
+	  invalidated has been observed by other observers. The
+	  workaround repeats the TLBI+DSB operation.
 
 config CAVIUM_ERRATUM_22375
 	bool "Cavium erratum 22375, 24313"
@@ -1026,6 +1029,15 @@ config MITIGATE_SPECTRE_BRANCH_HISTORY
 	  make use of branch history to influence future speculation.
 	  When taking an exception from user-space, a sequence of branches
 	  or a firmware call overwrites the branch history.
+
+config ARM64_TAGGED_ADDR_ABI
+	bool "Enable the tagged user addresses syscall ABI"
+	default y
+	help
+	  When this option is enabled, user applications can opt in to a
+	  relaxed ABI via prctl() allowing tagged addresses to be passed
+	  to system calls as pointer arguments. For details, see
+	  Documentation/arm64/tagged-address-abi.rst.
 
 menuconfig ARMV8_DEPRECATED
 	bool "Emulate deprecated/obsolete ARMv8 instructions"

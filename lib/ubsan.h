@@ -58,12 +58,6 @@ struct type_mismatch_data_common {
 	unsigned char type_check_kind;
 };
 
-struct nonnull_arg_data {
-	struct source_location location;
-	struct source_location attr_location;
-	int arg_index;
-};
-
 struct vla_bound_data {
 	struct source_location location;
 	struct type_descriptor *type;

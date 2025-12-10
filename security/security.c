@@ -274,16 +274,12 @@ int security_capset(struct cred *new, const struct cred *old,
 				effective, inheritable, permitted);
 }
 
-int security_capable(const struct cred *cred, struct user_namespace *ns,
-		     int cap)
+int security_capable(const struct cred *cred,
+		     struct user_namespace *ns,
+		     int cap,
+		     unsigned int opts)
 {
-	return call_int_hook(capable, 0, cred, ns, cap, SECURITY_CAP_AUDIT);
-}
-
-int security_capable_noaudit(const struct cred *cred, struct user_namespace *ns,
-			     int cap)
-{
-	return call_int_hook(capable, 0, cred, ns, cap, SECURITY_CAP_NOAUDIT);
+	return call_int_hook(capable, 0, cred, ns, cap, opts);
 }
 
 int security_quotactl(int cmds, int type, int id, struct super_block *sb)
@@ -884,6 +880,23 @@ void security_file_free(struct file *file)
 int security_file_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	return call_int_hook(file_ioctl, 0, file, cmd, arg);
+}
+
+/**
+ * security_file_ioctl_compat() - Check if an ioctl is allowed in compat mode
+ * @file: associated file
+ * @cmd: ioctl cmd
+ * @arg: ioctl arguments
+ *
+ * Compat version of security_file_ioctl() that correctly handles 32-bit
+ * processes running on 64-bit kernels.
+ *
+ * Return: Returns 0 if permission is granted.
+ */
+int security_file_ioctl_compat(struct file *file, unsigned int cmd,
+			       unsigned long arg)
+{
+	return call_int_hook(file_ioctl_compat, 0, file, cmd, arg);
 }
 
 static inline unsigned long mmap_prot(struct file *file, unsigned long prot)

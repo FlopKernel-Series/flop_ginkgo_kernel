@@ -196,7 +196,7 @@ int inet_listen(struct socket *sock, int backlog)
 {
 	struct sock *sk = sock->sk;
 	unsigned char old_state;
-	int err;
+	int err, tcp_fastopen;
 
 	lock_sock(sk);
 
@@ -218,16 +218,18 @@ int inet_listen(struct socket *sock, int backlog)
 		 * because the socket was in TCP_LISTEN state previously but
 		 * was shutdown() rather than close().
 		 */
-		if ((sysctl_tcp_fastopen & TFO_SERVER_WO_SOCKOPT1) &&
-		    (sysctl_tcp_fastopen & TFO_SERVER_ENABLE) &&
+		tcp_fastopen = sock_net(sk)->ipv4.sysctl_tcp_fastopen;
+		if ((tcp_fastopen & TFO_SERVER_WO_SOCKOPT1) &&
+		    (tcp_fastopen & TFO_SERVER_ENABLE) &&
 		    !inet_csk(sk)->icsk_accept_queue.fastopenq.max_qlen) {
 			fastopen_queue_tune(sk, backlog);
-			tcp_fastopen_init_key_once(true);
+			tcp_fastopen_init_key_once(sock_net(sk));
 		}
 
 		err = inet_csk_listen_start(sk, backlog);
 		if (err)
 			goto out;
+		tcp_call_bpf(sk, BPF_SOCK_OPS_TCP_LISTEN_CB, 0, NULL);
 	}
 	sk->sk_max_ack_backlog = backlog;
 	err = 0;
@@ -430,23 +432,37 @@ EXPORT_SYMBOL(inet_release);
 
 int inet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 {
-	struct sockaddr_in *addr = (struct sockaddr_in *)uaddr;
 	struct sock *sk = sock->sk;
+	int err;
+
+	/* If the socket has its own bind function then use it. (RAW) */
+	if (sk->sk_prot->bind) {
+		return sk->sk_prot->bind(sk, uaddr, addr_len);
+	}
+	if (addr_len < sizeof(struct sockaddr_in))
+		return -EINVAL;
+
+	/* BPF prog is run before any checks are done so that if the prog
+	 * changes context in a wrong way it will be caught.
+	 */
+	err = BPF_CGROUP_RUN_PROG_INET4_BIND(sk, uaddr);
+	if (err)
+		return err;
+
+	return __inet_bind(sk, uaddr, addr_len, false, true);
+}
+EXPORT_SYMBOL(inet_bind);
+
+int __inet_bind(struct sock *sk, struct sockaddr *uaddr, int addr_len,
+		bool force_bind_address_no_port, bool with_lock)
+{
+	struct sockaddr_in *addr = (struct sockaddr_in *)uaddr;
 	struct inet_sock *inet = inet_sk(sk);
 	struct net *net = sock_net(sk);
 	unsigned short snum;
 	int chk_addr_ret;
 	u32 tb_id = RT_TABLE_LOCAL;
 	int err;
-
-	/* If the socket has its own bind function then use it. (RAW) */
-	if (sk->sk_prot->bind) {
-		err = sk->sk_prot->bind(sk, uaddr, addr_len);
-		goto out;
-	}
-	err = -EINVAL;
-	if (addr_len < sizeof(struct sockaddr_in))
-		goto out;
 
 	if (addr->sin_family != AF_INET) {
 		/* Compatibility games : accept AF_UNSPEC (mapped to AF_INET)
@@ -490,7 +506,8 @@ int inet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	 *      would be illegal to use them (multicast/broadcast) in
 	 *      which case the sending device address is used.
 	 */
-	lock_sock(sk);
+	if (with_lock)
+		lock_sock(sk);
 
 	/* Check these errors (active socket, double bind). */
 	err = -EINVAL;
@@ -502,11 +519,18 @@ int inet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 		inet->inet_saddr = 0;  /* Use device */
 
 	/* Make sure we are allowed to bind here. */
-	if ((snum || !inet->bind_address_no_port) &&
-	    sk->sk_prot->get_port(sk, snum)) {
-		inet->inet_saddr = inet->inet_rcv_saddr = 0;
-		err = -EADDRINUSE;
-		goto out_release_sock;
+	if (snum || !(inet->bind_address_no_port ||
+		      force_bind_address_no_port)) {
+		if (sk->sk_prot->get_port(sk, snum)) {
+			inet->inet_saddr = inet->inet_rcv_saddr = 0;
+			err = -EADDRINUSE;
+			goto out_release_sock;
+		}
+		err = BPF_CGROUP_RUN_PROG_INET4_POST_BIND(sk);
+		if (err) {
+			inet->inet_saddr = inet->inet_rcv_saddr = 0;
+			goto out_release_sock;
+		}
 	}
 
 	if (inet->inet_rcv_saddr)
@@ -519,25 +543,37 @@ int inet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	sk_dst_reset(sk);
 	err = 0;
 out_release_sock:
-	release_sock(sk);
+	if (with_lock)
+		release_sock(sk);
 out:
 	return err;
 }
-EXPORT_SYMBOL(inet_bind);
 
 int inet_dgram_connect(struct socket *sock, struct sockaddr *uaddr,
 		       int addr_len, int flags)
 {
 	struct sock *sk = sock->sk;
+	const struct proto *prot;
+	int err;
 
 	if (addr_len < sizeof(uaddr->sa_family))
 		return -EINVAL;
+
+	/* IPV6_ADDRFORM can change sk->sk_prot under us. */
+	prot = READ_ONCE(sk->sk_prot);
+
 	if (uaddr->sa_family == AF_UNSPEC)
-		return sk->sk_prot->disconnect(sk, flags);
+		return prot->disconnect(sk, flags);
+
+	if (BPF_CGROUP_PRE_CONNECT_ENABLED(sk)) {
+		err = sk->sk_prot->pre_connect(sk, uaddr, addr_len);
+		if (err)
+			return err;
+	}
 
 	if (!inet_sk(sk)->inet_num && inet_autobind(sk))
 		return -EAGAIN;
-	return sk->sk_prot->connect(sk, uaddr, addr_len);
+	return prot->connect(sk, uaddr, addr_len);
 }
 EXPORT_SYMBOL(inet_dgram_connect);
 
@@ -614,6 +650,12 @@ int __inet_stream_connect(struct socket *sock, struct sockaddr *uaddr,
 		err = -EISCONN;
 		if (sk->sk_state != TCP_CLOSE)
 			goto out;
+
+		if (BPF_CGROUP_PRE_CONNECT_ENABLED(sk)) {
+			err = sk->sk_prot->pre_connect(sk, uaddr, addr_len);
+			if (err)
+				goto out;
+		}
 
 		err = sk->sk_prot->connect(sk, uaddr, addr_len);
 		if (err < 0)
@@ -692,10 +734,11 @@ EXPORT_SYMBOL(inet_stream_connect);
 int inet_accept(struct socket *sock, struct socket *newsock, int flags,
 		bool kern)
 {
-	struct sock *sk1 = sock->sk;
+	struct sock *sk1 = sock->sk, *sk2;
 	int err = -EINVAL;
-	struct sock *sk2 = sk1->sk_prot->accept(sk1, flags, &err, kern);
 
+	/* IPV6_ADDRFORM can change sk->sk_prot under us. */
+	sk2 = READ_ONCE(sk1->sk_prot)->accept(sk1, flags, &err, kern);
 	if (!sk2)
 		goto do_err;
 
@@ -704,7 +747,9 @@ int inet_accept(struct socket *sock, struct socket *newsock, int flags,
 	sock_rps_record_flow(sk2);
 	WARN_ON(!((1 << sk2->sk_state) &
 		  (TCPF_ESTABLISHED | TCPF_SYN_RECV |
-		  TCPF_CLOSE_WAIT | TCPF_CLOSE)));
+		   TCPF_FIN_WAIT1 | TCPF_FIN_WAIT2 |
+		   TCPF_CLOSING | TCPF_CLOSE_WAIT |
+		   TCPF_CLOSE)));
 
 	sock_graft(sk2, newsock);
 
@@ -751,15 +796,19 @@ EXPORT_SYMBOL(inet_getname);
 int inet_sendmsg(struct socket *sock, struct msghdr *msg, size_t size)
 {
 	struct sock *sk = sock->sk;
+	const struct proto *prot;
 
 	sock_rps_record_flow(sk);
 
+	/* IPV6_ADDRFORM can change sk->sk_prot under us. */
+	prot = READ_ONCE(sk->sk_prot);
+
 	/* We may need to bind the socket. */
-	if (!inet_sk(sk)->inet_num && !sk->sk_prot->no_autobind &&
+	if (!inet_sk(sk)->inet_num && !prot->no_autobind &&
 	    inet_autobind(sk))
 		return -EAGAIN;
 
-	return sk->sk_prot->sendmsg(sk, msg, size);
+	return prot->sendmsg(sk, msg, size);
 }
 EXPORT_SYMBOL(inet_sendmsg);
 
@@ -767,6 +816,7 @@ ssize_t inet_sendpage(struct socket *sock, struct page *page, int offset,
 		      size_t size, int flags)
 {
 	struct sock *sk = sock->sk;
+	const struct proto *prot;
 
 	sock_rps_record_flow(sk);
 
@@ -775,8 +825,10 @@ ssize_t inet_sendpage(struct socket *sock, struct page *page, int offset,
 	    inet_autobind(sk))
 		return -EAGAIN;
 
-	if (sk->sk_prot->sendpage)
-		return sk->sk_prot->sendpage(sk, page, offset, size, flags);
+	/* IPV6_ADDRFORM can change sk->sk_prot under us. */
+	prot = READ_ONCE(sk->sk_prot);
+	if (prot->sendpage)
+		return prot->sendpage(sk, page, offset, size, flags);
 	return sock_no_sendpage(sock, page, offset, size, flags);
 }
 EXPORT_SYMBOL(inet_sendpage);
@@ -785,13 +837,16 @@ int inet_recvmsg(struct socket *sock, struct msghdr *msg, size_t size,
 		 int flags)
 {
 	struct sock *sk = sock->sk;
+	const struct proto *prot;
 	int addr_len = 0;
 	int err;
 
 	sock_rps_record_flow(sk);
 
-	err = sk->sk_prot->recvmsg(sk, msg, size, flags & MSG_DONTWAIT,
-				   flags & ~MSG_DONTWAIT, &addr_len);
+	/* IPV6_ADDRFORM can change sk->sk_prot under us. */
+	prot = READ_ONCE(sk->sk_prot);
+	err = prot->recvmsg(sk, msg, size, flags & MSG_DONTWAIT,
+			    flags & ~MSG_DONTWAIT, &addr_len);
 	if (err >= 0)
 		msg->msg_namelen = addr_len;
 	return err;
@@ -1468,10 +1523,12 @@ EXPORT_SYMBOL(inet_current_timestamp);
 
 int inet_recv_error(struct sock *sk, struct msghdr *msg, int len, int *addr_len)
 {
-	if (sk->sk_family == AF_INET)
+	unsigned int family = READ_ONCE(sk->sk_family);
+
+	if (family == AF_INET)
 		return ip_recv_error(sk, msg, len, addr_len);
 #if IS_ENABLED(CONFIG_IPV6)
-	if (sk->sk_family == AF_INET6)
+	if (family == AF_INET6)
 		return pingv6_ops.ipv6_recv_error(sk, msg, len, addr_len);
 #endif
 	return -EINVAL;

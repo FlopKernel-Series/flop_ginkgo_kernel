@@ -12,7 +12,6 @@
  *      compression (see scripts/kallsyms.c for a more complete description)
  */
 #include <linux/kallsyms.h>
-#include <linux/module.h>
 #include <linux/init.h>
 #include <linux/seq_file.h>
 #include <linux/fs.h>
@@ -20,13 +19,10 @@
 #include <linux/err.h>
 #include <linux/proc_fs.h>
 #include <linux/sched.h>	/* for cond_resched */
-#include <linux/mm.h>
 #include <linux/ctype.h>
 #include <linux/slab.h>
 #include <linux/filter.h>
 #include <linux/compiler.h>
-
-#include <asm/sections.h>
 
 /*
  * These will be re-linked against their real values
@@ -50,37 +46,6 @@ extern const u8 kallsyms_token_table[] __weak;
 extern const u16 kallsyms_token_index[] __weak;
 
 extern const unsigned long kallsyms_markers[] __weak;
-
-static inline int is_kernel_inittext(unsigned long addr)
-{
-	if (addr >= (unsigned long)_sinittext
-	    && addr <= (unsigned long)_einittext)
-		return 1;
-	return 0;
-}
-
-static inline int is_kernel_text(unsigned long addr)
-{
-	if ((addr >= (unsigned long)_stext && addr <= (unsigned long)_etext) ||
-	    arch_is_kernel_text(addr))
-		return 1;
-	return in_gate_area_no_mm(addr);
-}
-
-static inline int is_kernel(unsigned long addr)
-{
-	if (addr >= (unsigned long)_stext && addr <= (unsigned long)_end)
-		return 1;
-	return in_gate_area_no_mm(addr);
-}
-
-static int is_ksym_addr(unsigned long addr)
-{
-	if (IS_ENABLED(CONFIG_KALLSYMS_ALL))
-		return is_kernel(addr);
-
-	return is_kernel_text(addr) || is_kernel_inittext(addr);
-}
 
 /*
  * Expand a compressed symbol data into the resulting uncompressed string,
@@ -192,6 +157,26 @@ static unsigned long kallsyms_sym_address(int idx)
 	return kallsyms_relative_base - 1 - kallsyms_offsets[idx];
 }
 
+#if defined(CONFIG_CFI_CLANG) && defined(CONFIG_THINLTO)
+/*
+ * LLVM appends a hash to static function names when ThinLTO and CFI are
+ * both enabled, which causes confusion and potentially breaks user space
+ * tools, so we will strip the postfix from expanded symbol names.
+ */
+static inline char *cleanup_symbol_name(char *s)
+{
+	char *res = NULL;
+
+	res = strrchr(s, '$');
+	if (res)
+		*res = '\0';
+
+	return res;
+}
+#else
+static inline char *cleanup_symbol_name(char *s) { return NULL; }
+#endif
+
 /* Lookup the address for this symbol. Returns 0 if not found. */
 unsigned long kallsyms_lookup_name(const char *name)
 {
@@ -203,6 +188,9 @@ unsigned long kallsyms_lookup_name(const char *name)
 		off = kallsyms_expand_symbol(off, namebuf, ARRAY_SIZE(namebuf));
 
 		if (strcmp(namebuf, name) == 0)
+			return kallsyms_sym_address(i);
+
+		if (cleanup_symbol_name(namebuf) && strcmp(namebuf, name) == 0)
 			return kallsyms_sym_address(i);
 	}
 	return module_kallsyms_lookup_name(name);
@@ -303,30 +291,6 @@ int kallsyms_lookup_size_offset(unsigned long addr, unsigned long *symbolsize,
 	return !!module_address_lookup(addr, symbolsize, offset, NULL, namebuf) ||
 	       !!__bpf_address_lookup(addr, symbolsize, offset, namebuf);
 }
-
-#ifdef CONFIG_CFI_CLANG
-/*
- * LLVM appends .cfi to function names when CONFIG_CFI_CLANG is enabled,
- * which causes confusion and potentially breaks user space tools, so we
- * will strip the postfix from expanded symbol names.
- */
-static inline void cleanup_symbol_name(char *s)
-{
-	char *res;
-
-#ifdef CONFIG_THINLTO
-	/* Filter out hashes from static functions */
-	res = strrchr(s, '$');
-	if (res)
-		*res = '\0';
-#endif
-	res = strrchr(s, '.');
-	if (res && !strcmp(res, ".cfi"))
-		*res = '\0';
-}
-#else
-static inline void cleanup_symbol_name(char *s) {}
-#endif
 
 /*
  * Lookup an address
@@ -527,6 +491,7 @@ struct kallsym_iter {
 	char name[KSYM_NAME_LEN];
 	char module_name[MODULE_NAME_LEN];
 	int exported;
+	int show_value;
 };
 
 static int get_ksymbol_mod(struct kallsym_iter *iter)
@@ -659,6 +624,41 @@ static const struct seq_operations kallsyms_op = {
 	.show = s_show
 };
 
+static inline int kallsyms_for_perf(void)
+{
+#ifdef CONFIG_PERF_EVENTS
+	extern int sysctl_perf_event_paranoid;
+	if (sysctl_perf_event_paranoid <= 1)
+		return 1;
+#endif
+	return 0;
+}
+
+/*
+ * We show kallsyms information even to normal users if we've enabled
+ * kernel profiling and are explicitly not paranoid (so kptr_restrict
+ * is clear, and sysctl_perf_event_paranoid isn't set).
+ *
+ * Otherwise, require CAP_SYSLOG (assuming kptr_restrict isn't set to
+ * block even that).
+ */
+bool kallsyms_show_value(const struct cred *cred)
+{
+	switch (kptr_restrict) {
+	case 0:
+		if (kallsyms_for_perf())
+			return true;
+	/* fallthrough */
+	case 1:
+		if (security_capable(cred, &init_user_ns, CAP_SYSLOG,
+				     CAP_OPT_NOAUDIT) == 0)
+			return true;
+	/* fallthrough */
+	default:
+		return false;
+	}
+}
+
 static int kallsyms_open(struct inode *inode, struct file *file)
 {
 	/*
@@ -672,6 +672,11 @@ static int kallsyms_open(struct inode *inode, struct file *file)
 		return -ENOMEM;
 	reset_iter(iter, 0);
 
+	/*
+	 * Instead of checking this on every s_show() call, cache
+	 * the result here at open time.
+	 */
+	iter->show_value = kallsyms_show_value(file->f_cred);
 	return 0;
 }
 

@@ -44,6 +44,7 @@
 #include <net/dcbnl.h>
 #endif
 #include <net/netprio_cgroup.h>
+#include <net/xdp.h>
 
 #include <linux/netdev_features.h>
 #include <linux/neighbour.h>
@@ -161,31 +162,38 @@ static inline bool dev_xmit_complete(int rc)
  *	(unsigned long) so they can be read and written atomically.
  */
 
+#define NET_DEV_STAT(FIELD)			\
+	union {					\
+		unsigned long FIELD;		\
+		atomic_long_t __##FIELD;	\
+	}
+
 struct net_device_stats {
-	unsigned long	rx_packets;
-	unsigned long	tx_packets;
-	unsigned long	rx_bytes;
-	unsigned long	tx_bytes;
-	unsigned long	rx_errors;
-	unsigned long	tx_errors;
-	unsigned long	rx_dropped;
-	unsigned long	tx_dropped;
-	unsigned long	multicast;
-	unsigned long	collisions;
-	unsigned long	rx_length_errors;
-	unsigned long	rx_over_errors;
-	unsigned long	rx_crc_errors;
-	unsigned long	rx_frame_errors;
-	unsigned long	rx_fifo_errors;
-	unsigned long	rx_missed_errors;
-	unsigned long	tx_aborted_errors;
-	unsigned long	tx_carrier_errors;
-	unsigned long	tx_fifo_errors;
-	unsigned long	tx_heartbeat_errors;
-	unsigned long	tx_window_errors;
-	unsigned long	rx_compressed;
-	unsigned long	tx_compressed;
+	NET_DEV_STAT(rx_packets);
+	NET_DEV_STAT(tx_packets);
+	NET_DEV_STAT(rx_bytes);
+	NET_DEV_STAT(tx_bytes);
+	NET_DEV_STAT(rx_errors);
+	NET_DEV_STAT(tx_errors);
+	NET_DEV_STAT(rx_dropped);
+	NET_DEV_STAT(tx_dropped);
+	NET_DEV_STAT(multicast);
+	NET_DEV_STAT(collisions);
+	NET_DEV_STAT(rx_length_errors);
+	NET_DEV_STAT(rx_over_errors);
+	NET_DEV_STAT(rx_crc_errors);
+	NET_DEV_STAT(rx_frame_errors);
+	NET_DEV_STAT(rx_fifo_errors);
+	NET_DEV_STAT(rx_missed_errors);
+	NET_DEV_STAT(tx_aborted_errors);
+	NET_DEV_STAT(tx_carrier_errors);
+	NET_DEV_STAT(tx_fifo_errors);
+	NET_DEV_STAT(tx_heartbeat_errors);
+	NET_DEV_STAT(tx_window_errors);
+	NET_DEV_STAT(rx_compressed);
+	NET_DEV_STAT(tx_compressed);
 };
+#undef NET_DEV_STAT
 
 
 #include <linux/cache.h>
@@ -693,6 +701,7 @@ struct netdev_rx_queue {
 #endif
 	struct kobject			kobj;
 	struct net_device		*dev;
+	struct xdp_rxq_info		xdp_rxq;
 } ____cacheline_aligned_in_smp;
 
 /*
@@ -784,10 +793,10 @@ enum tc_setup_type {
 	TC_SETUP_CLSBPF,
 };
 
-/* These structures hold the attributes of xdp state that are being passed
- * to the netdevice through the xdp op.
+/* These structures hold the attributes of bpf state that are being passed
+ * to the netdevice through the bpf op.
  */
-enum xdp_netdev_command {
+enum bpf_netdev_command {
 	/* Set or clear a bpf program used in the earliest stages of packet
 	 * rx. The prog will have been loaded as BPF_PROG_TYPE_XDP. The callee
 	 * is responsible for calling bpf_prog_put on any old progs that are
@@ -797,17 +806,21 @@ enum xdp_netdev_command {
 	 */
 	XDP_SETUP_PROG,
 	XDP_SETUP_PROG_HW,
-	/* Check if a bpf program is set on the device.  The callee should
-	 * set @prog_attached to one of XDP_ATTACHED_* values, note that "true"
-	 * is equivalent to XDP_ATTACHED_DRV.
-	 */
 	XDP_QUERY_PROG,
+	XDP_QUERY_PROG_HW,
+	/* BPF program for offload callbacks, invoked at program load time. */
+	BPF_OFFLOAD_MAP_ALLOC,
+	BPF_OFFLOAD_MAP_FREE,
+	XDP_QUERY_XSK_UMEM,
+	XDP_SETUP_XSK_UMEM,
 };
 
+struct bpf_prog_offload_ops;
 struct netlink_ext_ack;
+struct xdp_umem;
 
-struct netdev_xdp {
-	enum xdp_netdev_command command;
+struct netdev_bpf {
+	enum bpf_netdev_command command;
 	union {
 		/* XDP_SETUP_PROG */
 		struct {
@@ -815,11 +828,21 @@ struct netdev_xdp {
 			struct bpf_prog *prog;
 			struct netlink_ext_ack *extack;
 		};
-		/* XDP_QUERY_PROG */
+		/* XDP_QUERY_PROG, XDP_QUERY_PROG_HW */
 		struct {
-			u8 prog_attached;
 			u32 prog_id;
+			/* flags with which program was installed */
+			u32 prog_flags;
 		};
+		/* BPF_OFFLOAD_MAP_ALLOC, BPF_OFFLOAD_MAP_FREE */
+		struct {
+			struct bpf_offloaded_map *offmap;
+		};
+		/* XDP_QUERY_XSK_UMEM, XDP_SETUP_XSK_UMEM */
+		struct {
+			struct xdp_umem *umem; /* out for query*/
+			u16 queue_id; /* in for query */
+		} xsk;
 	};
 };
 
@@ -1153,12 +1176,17 @@ struct macsec_ops {
  *	appropriate rx headroom value allows avoiding skb head copy on
  *	forward. Setting a negative value resets the rx headroom to the
  *	default value.
- * int (*ndo_xdp)(struct net_device *dev, struct netdev_xdp *xdp);
+ * int (*ndo_bpf)(struct net_device *dev, struct netdev_bpf *bpf);
  *	This function is used to set or query state related to XDP on the
- *	netdevice. See definition of enum xdp_netdev_command for details.
- * int (*ndo_xdp_xmit)(struct net_device *dev, struct xdp_buff *xdp);
- *	This function is used to submit a XDP packet for transmit on a
- *	netdevice.
+ *	netdevice and manage BPF offload. See definition of
+ *	enum bpf_netdev_command for details.
+ * int (*ndo_xdp_xmit)(struct net_device *dev, int n, struct xdp_frame **xdp,
+ *			u32 flags);
+ *	This function is used to submit @n XDP packets for transmit on a
+ *	netdevice. Returns number of frames successfully transmitted, frames
+ *	that got dropped are freed/returned via xdp_return_frame().
+ *	Returns negative number, means general error invoking ndo, meaning
+ *	no frames were xmit'ed and core-caller will free all frames.
  * void (*ndo_xdp_flush)(struct net_device *dev);
  *	This function is used to inform the driver to flush a particular
  *	xdp tx queue. Must be called on same CPU as xdp_xmit.
@@ -1343,10 +1371,11 @@ struct net_device_ops {
 						       struct sk_buff *skb);
 	void			(*ndo_set_rx_headroom)(struct net_device *dev,
 						       int needed_headroom);
-	int			(*ndo_xdp)(struct net_device *dev,
-					   struct netdev_xdp *xdp);
-	int			(*ndo_xdp_xmit)(struct net_device *dev,
-						struct xdp_buff *xdp);
+	int			(*ndo_bpf)(struct net_device *dev,
+					   struct netdev_bpf *bpf);
+	int			(*ndo_xdp_xmit)(struct net_device *dev, int n,
+						struct xdp_frame **xdp,
+						u32 flags);
 	void			(*ndo_xdp_flush)(struct net_device *dev);
 };
 
@@ -2272,6 +2301,12 @@ struct pcpu_sw_netstats {
 	struct u64_stats_sync   syncp;
 };
 
+struct pcpu_lstats {
+	u64 packets;
+	u64 bytes;
+	struct u64_stats_sync syncp;
+};
+
 #define __netdev_alloc_pcpu_stats(type, gfp)				\
 ({									\
 	typeof(type) __percpu *pcpu_stats = alloc_percpu_gfp(type, gfp);\
@@ -2486,14 +2521,6 @@ void free_netdev(struct net_device *dev);
 void netdev_freemem(struct net_device *dev);
 void synchronize_net(void);
 int init_dummy_netdev(struct net_device *dev);
-
-DECLARE_PER_CPU(int, xmit_recursion);
-#define XMIT_RECURSION_LIMIT	8
-
-static inline int dev_recursion_level(void)
-{
-	return this_cpu_read(xmit_recursion);
-}
 
 struct net_device *dev_get_by_index(struct net *net, int ifindex);
 struct net_device *__dev_get_by_index(struct net *net, int ifindex);
@@ -2842,7 +2869,11 @@ struct softnet_data {
 	struct Qdisc		*output_queue;
 	struct Qdisc		**output_queue_tailp;
 	struct sk_buff		*completion_queue;
-
+	/* written and read only by owning cpu: */
+	struct {
+		u16 recursion;
+		u8  more;
+	} xmit;
 #ifdef CONFIG_RPS
 	/* input_queue_head should be written by cpu owning this struct,
 	 * and only read by other cpus. Worth using a cache line.
@@ -2877,6 +2908,28 @@ static inline void input_queue_tail_incr_save(struct softnet_data *sd,
 }
 
 DECLARE_PER_CPU_ALIGNED(struct softnet_data, softnet_data);
+
+static inline int dev_recursion_level(void)
+{
+	return __this_cpu_read(softnet_data.xmit.recursion);
+}
+
+#define XMIT_RECURSION_LIMIT	8
+static inline bool dev_xmit_recursion(void)
+{
+	return unlikely(__this_cpu_read(softnet_data.xmit.recursion) >
+			XMIT_RECURSION_LIMIT);
+}
+
+static inline void dev_xmit_recursion_inc(void)
+{
+	__this_cpu_inc(softnet_data.xmit.recursion);
+}
+
+static inline void dev_xmit_recursion_dec(void)
+{
+	__this_cpu_dec(softnet_data.xmit.recursion);
+}
 
 void __netif_schedule(struct Qdisc *q);
 void netif_schedule_queue(struct netdev_queue *txq);
@@ -3265,6 +3318,12 @@ static inline int netif_set_real_num_rx_queues(struct net_device *dev,
 }
 #endif
 
+static inline struct netdev_rx_queue *
+__netif_get_rx_queue(struct net_device *dev, unsigned int rxq)
+{
+	return dev->_rx + rxq;
+}
+
 #ifdef CONFIG_SYSFS
 static inline unsigned int get_netdev_rx_queue_index(
 		struct netdev_rx_queue *queue)
@@ -3332,6 +3391,7 @@ int do_xdp_generic(struct bpf_prog *xdp_prog, struct sk_buff *skb);
 int netif_rx(struct sk_buff *skb);
 int netif_rx_ni(struct sk_buff *skb);
 int netif_receive_skb(struct sk_buff *skb);
+int netif_receive_skb_core(struct sk_buff *skb);
 gro_result_t napi_gro_receive(struct napi_struct *napi, struct sk_buff *skb);
 void napi_gro_flush(struct napi_struct *napi, bool flush_old);
 struct sk_buff *napi_get_frags(struct napi_struct *napi);
@@ -3378,10 +3438,12 @@ struct sk_buff *validate_xmit_skb_list(struct sk_buff *skb, struct net_device *d
 struct sk_buff *dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 				    struct netdev_queue *txq, int *ret);
 
-typedef int (*xdp_op_t)(struct net_device *dev, struct netdev_xdp *xdp);
+typedef int (*bpf_op_t)(struct net_device *dev, struct netdev_bpf *bpf);
 int dev_change_xdp_fd(struct net_device *dev, struct netlink_ext_ack *extack,
 		      int fd, u32 flags);
-u8 __dev_xdp_attached(struct net_device *dev, xdp_op_t xdp_op, u32 *prog_id);
+u32 __dev_xdp_query(struct net_device *dev, bpf_op_t xdp_op,
+		    enum bpf_netdev_command cmd);
+int xdp_umem_query(struct net_device *dev, u16 queue_id);
 
 int __dev_forward_skb(struct net_device *dev, struct sk_buff *skb);
 int dev_forward_skb(struct net_device *dev, struct sk_buff *skb);
@@ -3816,6 +3878,24 @@ void __hw_addr_unsync_dev(struct netdev_hw_addr_list *list,
 void __hw_addr_init(struct netdev_hw_addr_list *list);
 
 /* Functions used for device addresses handling */
+static inline void
+__dev_addr_set(struct net_device *dev, const u8 *addr, size_t len)
+{
+	memcpy(dev->dev_addr, addr, len);
+}
+
+static inline void dev_addr_set(struct net_device *dev, const u8 *addr)
+{
+	__dev_addr_set(dev, addr, dev->addr_len);
+}
+
+static inline void
+dev_addr_mod(struct net_device *dev, unsigned int offset,
+	     const u8 *addr, size_t len)
+{
+	memcpy(&dev->dev_addr[offset], addr, len);
+}
+
 int dev_addr_add(struct net_device *dev, const unsigned char *addr,
 		 unsigned char addr_type);
 int dev_addr_del(struct net_device *dev, const unsigned char *addr,
@@ -4093,6 +4173,11 @@ static inline netdev_tx_t __netdev_start_xmit(const struct net_device_ops *ops,
 {
 	skb->xmit_more = more ? 1 : 0;
 	return ops->ndo_start_xmit(skb, dev);
+}
+
+static inline bool netdev_xmit_more(void)
+{
+	return __this_cpu_read(softnet_data.xmit.more);
 }
 
 static inline netdev_tx_t netdev_start_xmit(struct sk_buff *skb, struct net_device *dev,
@@ -4532,5 +4617,11 @@ do {								\
  */
 #define PTYPE_HASH_SIZE	(16)
 #define PTYPE_HASH_MASK	(PTYPE_HASH_SIZE - 1)
+
+/* Note: Avoid these macros in fast path, prefer per-cpu or per-queue counters. */
+#define DEV_STATS_INC(DEV, FIELD) atomic_long_inc(&(DEV)->stats.__##FIELD)
+#define DEV_STATS_ADD(DEV, FIELD, VAL) 	\
+		atomic_long_add((VAL), &(DEV)->stats.__##FIELD)
+#define DEV_STATS_READ(DEV, FIELD) atomic_long_read(&(DEV)->stats.__##FIELD)
 
 #endif	/* _LINUX_NETDEVICE_H */

@@ -137,6 +137,7 @@ static void hif_usb_mgmt_cb(struct urb *urb)
 {
 	struct cmd_buf *cmd = (struct cmd_buf *)urb->context;
 	struct hif_device_usb *hif_dev;
+	unsigned long flags;
 	bool txok = true;
 
 	if (!cmd || !cmd->skb || !cmd->hif_dev)
@@ -157,14 +158,14 @@ static void hif_usb_mgmt_cb(struct urb *urb)
 		 * If the URBs are being flushed, no need to complete
 		 * this packet.
 		 */
-		spin_lock(&hif_dev->tx.tx_lock);
+		spin_lock_irqsave(&hif_dev->tx.tx_lock, flags);
 		if (hif_dev->tx.flags & HIF_USB_TX_FLUSH) {
-			spin_unlock(&hif_dev->tx.tx_lock);
+			spin_unlock_irqrestore(&hif_dev->tx.tx_lock, flags);
 			dev_kfree_skb_any(cmd->skb);
 			kfree(cmd);
 			return;
 		}
-		spin_unlock(&hif_dev->tx.tx_lock);
+		spin_unlock_irqrestore(&hif_dev->tx.tx_lock, flags);
 
 		break;
 	default:
@@ -686,8 +687,7 @@ static void ath9k_hif_usb_rx_cb(struct urb *urb)
 	}
 
 resubmit:
-	skb_reset_tail_pointer(skb);
-	skb_trim(skb, 0);
+	__skb_set_length(skb, 0);
 
 	usb_anchor_urb(urb, &hif_dev->rx_submitted);
 	ret = usb_submit_urb(urb, GFP_ATOMIC);
@@ -724,8 +724,7 @@ static void ath9k_hif_usb_reg_in_cb(struct urb *urb)
 	case -ESHUTDOWN:
 		goto free_skb;
 	default:
-		skb_reset_tail_pointer(skb);
-		skb_trim(skb, 0);
+		__skb_set_length(skb, 0);
 
 		goto resubmit;
 	}

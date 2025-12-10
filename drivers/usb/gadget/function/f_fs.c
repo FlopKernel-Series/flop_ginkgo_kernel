@@ -817,6 +817,7 @@ static void ffs_user_copy_worker(struct work_struct *work)
 	int ret = io_data->req->status ? io_data->req->status :
 					 io_data->req->actual;
 	bool kiocb_has_eventfd = io_data->kiocb->ki_flags & IOCB_EVENTFD;
+	unsigned long flags;
 
 	ffs_log("enter: ret %d for %s", ret, io_data->read ? "read" : "write");
 
@@ -835,7 +836,10 @@ static void ffs_user_copy_worker(struct work_struct *work)
 	if (io_data->ffs->ffs_eventfd && !kiocb_has_eventfd)
 		eventfd_signal(io_data->ffs->ffs_eventfd, 1);
 
+	spin_lock_irqsave(&io_data->ffs->eps_lock, flags);
 	usb_ep_free_request(io_data->ep, io_data->req);
+	io_data->req = NULL;
+	spin_unlock_irqrestore(&io_data->ffs->eps_lock, flags);
 
 	if (io_data->read)
 		kfree(io_data->to_free);
@@ -1403,7 +1407,6 @@ static long ffs_epfile_ioctl(struct file *file, unsigned code,
 		switch (epfile->ffs->gadget->speed) {
 		case USB_SPEED_SUPER_PLUS:
 		case USB_SPEED_SUPER:
-		case USB_SPEED_SUPER_PLUS:
 			desc_idx = 2;
 			break;
 		case USB_SPEED_HIGH:
@@ -1466,7 +1469,7 @@ ffs_sb_make_inode(struct super_block *sb, void *data,
 	inode = new_inode(sb);
 
 	if (likely(inode)) {
-		struct timespec ts = current_time(inode);
+		struct timespec64 ts = current_time(inode);
 
 		inode->i_ino	 = get_next_ino();
 		inode->i_mode    = perms->mode;
@@ -1679,8 +1682,13 @@ ffs_fs_mount(struct file_system_type *t, int flags,
 		return ERR_PTR(ret);
 
 	ffs = ffs_data_new(dev_name);
-	if (unlikely(!ffs))
-		return ERR_PTR(-ENOMEM);
+	if (IS_ERR_OR_NULL(ffs)) {
+		if (!ffs)
+			return ERR_PTR(-ENOMEM);
+		else
+			return ERR_PTR((long) ffs);
+	}
+
 	ffs->file_perms = data.perms;
 	ffs->no_disconnect = data.no_disconnect;
 
@@ -2007,6 +2015,8 @@ static void functionfs_unbind(struct ffs_data *ffs)
 		ffs->ep0req = NULL;
 		ffs->gadget = NULL;
 		clear_bit(FFS_FL_BOUND, &ffs->flags);
+		ffs_log("state %d setup_state %d flag %lu gadget %pK\n",
+			ffs->state, ffs->setup_state, ffs->flags, ffs->gadget);
 		mutex_unlock(&ffs->mutex);
 		ffs_data_put(ffs);
 	}
@@ -2074,18 +2084,21 @@ static void ffs_epfiles_destroy(struct ffs_epfile *epfiles, unsigned count)
 
 static void ffs_func_eps_disable(struct ffs_function *func)
 {
+	struct ffs_data *ffs;
 	struct ffs_ep *ep;
 	struct ffs_epfile *epfile;
 	unsigned short count;
 	unsigned long flags;
 
+	spin_lock_irqsave(&func->ffs->eps_lock, flags);
+	ffs = func->ffs;
+	ep = func->eps;
+	epfile = ffs->epfiles;
+	count = ffs->eps_count;
+
 	ffs_log("enter: state %d setup_state %d flag %lu", func->ffs->state,
 		func->ffs->setup_state, func->ffs->flags);
 
-	spin_lock_irqsave(&func->ffs->eps_lock, flags);
-	count = func->ffs->eps_count;
-	epfile = func->ffs->epfiles;
-	ep = func->eps;
 	while (count--) {
 		/* pending requests get nuked */
 		if (likely(ep->ep))
@@ -2111,14 +2124,15 @@ static int ffs_func_eps_enable(struct ffs_function *func)
 	unsigned long flags;
 	int ret = 0;
 
-	ffs_log("enter: state %d setup_state %d flag %lu", func->ffs->state,
-		func->ffs->setup_state, func->ffs->flags);
-
 	spin_lock_irqsave(&func->ffs->eps_lock, flags);
 	ffs = func->ffs;
 	ep = func->eps;
 	epfile = ffs->epfiles;
 	count = ffs->eps_count;
+
+	ffs_log("enter: state %d setup_state %d flag %lu", func->ffs->state,
+		func->ffs->setup_state, func->ffs->flags);
+
 	while(count--) {
 		ep->ep->driver_data = ep;
 
@@ -3220,6 +3234,7 @@ static inline struct f_fs_opts *ffs_do_functionfs_bind(struct usb_function *f,
 	struct ffs_function *func = ffs_func_from_usb(f);
 	struct f_fs_opts *ffs_opts =
 		container_of(f->fi, struct f_fs_opts, func_inst);
+	struct ffs_data *ffs = ffs_opts->dev->ffs_data;
 	struct ffs_data *ffs_data;
 	int ret;
 
@@ -3374,7 +3389,7 @@ static int _ffs_func_bind(struct usb_configuration *c,
 	if (likely(super)) {
 		func->function.ss_descriptors = func->function.ssp_descriptors =
 			vla_ptr(vlabuf, d, ss_descs);
-		ss_len = ffs_do_descs(ffs->ss_descs_count,
+		ss_len = ffs_do_descs(ffs, ffs->ss_descs_count,
 				vla_ptr(vlabuf, d, raw_descs) + fs_len + hs_len,
 				d_raw_descs__sz - fs_len - hs_len,
 				__ffs_func_bind_do_descs, func);
@@ -3588,7 +3603,7 @@ static int ffs_func_setup(struct usb_function *f,
 	__ffs_event_add(ffs, FUNCTIONFS_SETUP);
 	spin_unlock_irqrestore(&ffs->ev.waitq.lock, flags);
 
-	return creq->wLength == 0 ? USB_GADGET_DELAYED_STATUS : 0;
+	return ffs->ev.setup.wLength == 0 ? USB_GADGET_DELAYED_STATUS : 0;
 }
 
 static bool ffs_func_req_match(struct usb_function *f,
@@ -3842,6 +3857,8 @@ static void ffs_func_unbind(struct usb_configuration *c,
 	func->function.ssp_descriptors = NULL;
 	func->interfaces_nums = NULL;
 
+	ffs_log("exit: state %d setup_state %d flag %lu", ffs->state,
+		ffs->setup_state, ffs->flags);
 }
 
 static struct usb_function *ffs_alloc(struct usb_function_instance *fi)
@@ -3970,6 +3987,7 @@ static int ffs_acquire_dev(const char *dev_name, struct ffs_data *ffs_data)
 	}
 
 	ffs_dev_unlock();
+
 	return ret;
 }
 

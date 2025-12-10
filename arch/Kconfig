@@ -199,6 +199,9 @@ config HAVE_OPTPROBES
 config HAVE_KPROBES_ON_FTRACE
 	bool
 
+config HAVE_FUNCTION_ERROR_INJECTION
+	bool
+
 config HAVE_NMI
 	bool
 
@@ -238,6 +241,10 @@ config ARCH_HAS_SET_MEMORY
 	bool
 
 config ARCH_HAS_CPU_FINALIZE_INIT
+	bool
+
+# Select if arch has all set_direct_map_invalid/default() functions
+config ARCH_HAS_SET_DIRECT_MAP
 	bool
 
 # Select if arch init_task initializer is different to init/init_task.c
@@ -791,6 +798,18 @@ config HAVE_IRQ_TIME_ACCOUNTING
 	  Archs need to ensure they use a high enough resolution clock to
 	  support irq time accounting and then call enable_sched_clock_irqtime().
 
+config HAVE_MOVE_PUD
+	bool
+	help
+	  Architectures that select this are able to move page tables at the
+	  PUD level. If there are only 3 page table levels, the move effectively
+	  happens at the PGD level.
+
+config HAVE_MOVE_PMD
+	bool
+	help
+	  Archs that select this are able to move page tables at the PMD level.
+
 config HAVE_ARCH_TRANSPARENT_HUGEPAGE
 	bool
 
@@ -1120,5 +1139,19 @@ config HAVE_ARCH_COMPILER_H
 
 config ARCH_USE_MEMREMAP_PROT
 	bool
+
+# Select if the architecture has support for applying RELR relocations.
+config ARCH_HAS_RELR
+	bool
+
+config RELR
+	bool "Use RELR relocation packing"
+	depends on ARCH_HAS_RELR && TOOLS_SUPPORT_RELR
+	default y
+	help
+	  Store the kernel's dynamic relocations in the RELR relocation packing
+	  format. Requires a compatible linker (LLD supports this feature), as
+	  well as compatible NM and OBJCOPY utilities (llvm-nm and llvm-objcopy
+	  are compatible).
 
 source "kernel/gcov/Kconfig"

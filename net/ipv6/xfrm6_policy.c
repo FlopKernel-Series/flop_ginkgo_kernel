@@ -60,12 +60,18 @@ static int xfrm6_get_saddr(struct net *net, int oif,
 {
 	struct dst_entry *dst;
 	struct net_device *dev;
+	struct inet6_dev *idev;
 
 	dst = xfrm6_dst_lookup(net, 0, oif, NULL, daddr, mark);
 	if (IS_ERR(dst))
 		return -EHOSTUNREACH;
 
-	dev = ip6_dst_idev(dst)->dev;
+	idev = ip6_dst_idev(dst);
+	if (!idev) {
+		dst_release(dst);
+		return -EHOSTUNREACH;
+	}
+	dev = idev->dev;
 	ipv6_dev_get_saddr(dev_net(dev), dev, &daddr->in6, 0, &saddr->in6);
 	dst_release(dst);
 	return 0;
@@ -107,8 +113,6 @@ static int xfrm6_fill_dst(struct xfrm_dst *xdst, struct net_device *dev,
 	 * it was magically lost, so this code needs audit */
 	xdst->u.rt6.rt6i_flags = rt->rt6i_flags & (RTF_ANYCAST |
 						   RTF_LOCAL);
-	xdst->u.rt6.rt6i_metric = rt->rt6i_metric;
-	xdst->u.rt6.rt6i_node = rt->rt6i_node;
 	xdst->route_cookie = rt6_get_cookie(rt);
 	xdst->u.rt6.rt6i_gateway = rt->rt6i_gateway;
 	xdst->u.rt6.rt6i_dst = rt->rt6i_dst;
@@ -265,7 +269,7 @@ static void xfrm6_dst_ifdown(struct dst_entry *dst, struct net_device *dev,
 			in6_dev_put(xdst->u.rt6.rt6i_idev);
 			xdst->u.rt6.rt6i_idev = loopback_idev;
 			in6_dev_hold(loopback_idev);
-			xdst = (struct xfrm_dst *)xdst->u.dst.child;
+			xdst = (struct xfrm_dst *)xfrm_dst_child(&xdst->u.dst);
 		} while (xdst->u.dst.xfrm);
 
 		__in6_dev_put(loopback_idev);

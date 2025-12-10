@@ -1012,6 +1012,9 @@ tx_error:
 static netdev_tx_t sit_tunnel_xmit(struct sk_buff *skb,
 				   struct net_device *dev)
 {
+	if (!pskb_inet_may_pull(skb))
+		goto tx_err;
+
 	switch (skb->protocol) {
 	case htons(ETH_P_IP):
 		sit_tunnel_xmit__(skb, dev, IPPROTO_IPIP);
@@ -1865,19 +1868,22 @@ err_alloc_dev:
 	return err;
 }
 
-static void __net_exit sit_exit_net(struct net *net)
+static void __net_exit sit_exit_batch_net(struct list_head *net_list)
 {
 	LIST_HEAD(list);
+	struct net *net;
 
 	rtnl_lock();
-	sit_destroy_tunnels(net, &list);
+	list_for_each_entry(net, net_list, exit_list)
+		sit_destroy_tunnels(net, &list);
+
 	unregister_netdevice_many(&list);
 	rtnl_unlock();
 }
 
 static struct pernet_operations sit_net_ops = {
 	.init = sit_init_net,
-	.exit = sit_exit_net,
+	.exit_batch = sit_exit_batch_net,
 	.id   = &sit_net_id,
 	.size = sizeof(struct sit_net),
 };

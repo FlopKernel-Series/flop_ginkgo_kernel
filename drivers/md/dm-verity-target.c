@@ -62,14 +62,6 @@ struct dm_verity_prefetch_work {
 struct buffer_aux {
 	int hash_verified;
 };
-/*
- * While system shutdown, skip verity work for I/O error.
- */
-static inline bool verity_is_system_shutting_down(void)
-{
-	return system_state == SYSTEM_HALT || system_state == SYSTEM_POWER_OFF
-		|| system_state == SYSTEM_RESTART;
-}
 
 /*
  * Initialize struct buffer_aux for a freshly created buffer.
@@ -1256,7 +1248,7 @@ EXPORT_SYMBOL_GPL(verity_ctr);
 static struct target_type verity_target = {
 	.name		= "verity",
 	.features	= DM_TARGET_IMMUTABLE,
-	.version	= {1, 3, 0},
+	.version	= {1, 4, 0},
 	.module		= THIS_MODULE,
 	.ctr		= verity_ctr,
 	.dtr		= verity_dtr,

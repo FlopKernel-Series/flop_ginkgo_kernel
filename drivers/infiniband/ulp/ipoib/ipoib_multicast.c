@@ -140,7 +140,7 @@ static struct ipoib_mcast *ipoib_mcast_alloc(struct net_device *dev,
 {
 	struct ipoib_mcast *mcast;
 
-	mcast = kzalloc(sizeof *mcast, can_sleep ? GFP_KERNEL : GFP_ATOMIC);
+	mcast = kzalloc(sizeof(*mcast), can_sleep ? GFP_KERNEL : GFP_ATOMIC);
 	if (!mcast)
 		return NULL;
 
@@ -543,21 +543,18 @@ static int ipoib_mcast_join(struct net_device *dev, struct ipoib_mcast *mcast)
 			/* SM supports sendonly-fullmember, otherwise fallback to full-member */
 			rec.join_state = SENDONLY_FULLMEMBER_JOIN;
 	}
-	spin_unlock_irq(&priv->lock);
 
 	multicast = ib_sa_join_multicast(&ipoib_sa_client, priv->ca, priv->port,
-					 &rec, comp_mask, GFP_KERNEL,
+					 &rec, comp_mask, GFP_ATOMIC,
 					 ipoib_mcast_join_complete, mcast);
-	spin_lock_irq(&priv->lock);
 	if (IS_ERR(multicast)) {
 		ret = PTR_ERR(multicast);
 		ipoib_warn(priv, "ib_sa_join_multicast failed, status %d\n", ret);
 		/* Requeue this join task with a backoff delay */
 		__ipoib_mcast_schedule_join_thread(priv, mcast, 1);
 		clear_bit(IPOIB_MCAST_FLAG_BUSY, &mcast->flags);
-		spin_unlock_irq(&priv->lock);
 		complete(&mcast->done);
-		spin_lock_irq(&priv->lock);
+		return ret;
 	}
 	return 0;
 }
@@ -919,7 +916,7 @@ void ipoib_mcast_restart_task(struct work_struct *work)
 		if (!ipoib_mcast_addr_is_valid(ha->addr, dev->broadcast))
 			continue;
 
-		memcpy(mgid.raw, ha->addr + 4, sizeof mgid);
+		memcpy(mgid.raw, ha->addr + 4, sizeof(mgid));
 
 		mcast = __ipoib_mcast_find(dev, &mgid);
 		if (!mcast || test_bit(IPOIB_MCAST_FLAG_SENDONLY, &mcast->flags)) {
@@ -1000,7 +997,7 @@ struct ipoib_mcast_iter *ipoib_mcast_iter_init(struct net_device *dev)
 {
 	struct ipoib_mcast_iter *iter;
 
-	iter = kmalloc(sizeof *iter, GFP_KERNEL);
+	iter = kmalloc(sizeof(*iter), GFP_KERNEL);
 	if (!iter)
 		return NULL;
 

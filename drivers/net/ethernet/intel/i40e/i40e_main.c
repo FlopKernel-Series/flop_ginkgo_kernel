@@ -4708,7 +4708,7 @@ static int i40e_pf_wait_queues_disabled(struct i40e_pf *pf)
 {
 	int v, ret = 0;
 
-	for (v = 0; v < pf->hw.func_caps.num_vsis; v++) {
+	for (v = 0; v < pf->num_alloc_vsi; v++) {
 		if (pf->vsi[v]) {
 			ret = i40e_vsi_wait_queues_disabled(pf->vsi[v]);
 			if (ret)
@@ -9645,12 +9645,12 @@ static int i40e_xdp_setup(struct i40e_vsi *vsi,
 }
 
 /**
- * i40e_xdp - implements ndo_xdp for i40e
+ * i40e_xdp - implements ndo_bpf for i40e
  * @dev: netdevice
  * @xdp: XDP command
  **/
 static int i40e_xdp(struct net_device *dev,
-		    struct netdev_xdp *xdp)
+		    struct netdev_bpf *xdp)
 {
 	struct i40e_netdev_priv *np = netdev_priv(dev);
 	struct i40e_vsi *vsi = np->vsi;
@@ -9662,7 +9662,6 @@ static int i40e_xdp(struct net_device *dev,
 	case XDP_SETUP_PROG:
 		return i40e_xdp_setup(vsi, xdp->prog);
 	case XDP_QUERY_PROG:
-		xdp->prog_attached = i40e_enabled_xdp_vsi(vsi);
 		xdp->prog_id = vsi->xdp_prog ? vsi->xdp_prog->aux->id : 0;
 		return 0;
 	default:
@@ -9702,7 +9701,7 @@ static const struct net_device_ops i40e_netdev_ops = {
 	.ndo_features_check	= i40e_features_check,
 	.ndo_bridge_getlink	= i40e_ndo_bridge_getlink,
 	.ndo_bridge_setlink	= i40e_ndo_bridge_setlink,
-	.ndo_xdp		= i40e_xdp,
+	.ndo_bpf		= i40e_xdp,
 };
 
 /**
@@ -12261,7 +12260,7 @@ static int __init i40e_init_module(void)
 	 * since we need to be able to guarantee forward progress even under
 	 * memory pressure.
 	 */
-	i40e_wq = alloc_workqueue("%s", WQ_MEM_RECLAIM, 0, i40e_driver_name);
+	i40e_wq = alloc_workqueue("%s", 0, 0, i40e_driver_name);
 	if (!i40e_wq) {
 		pr_err("%s: Failed to create workqueue\n", i40e_driver_name);
 		return -ENOMEM;

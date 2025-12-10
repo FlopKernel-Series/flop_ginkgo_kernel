@@ -213,7 +213,7 @@ struct sock_common {
 		struct hlist_node	skc_node;
 		struct hlist_nulls_node skc_nulls_node;
 	};
-	int			skc_tx_queue_mapping;
+	unsigned short		skc_tx_queue_mapping;
 	union {
 		int		skc_incoming_cpu;
 		u32		skc_rcv_wnd;
@@ -230,6 +230,8 @@ struct sock_common {
 	};
 	/* public: */
 };
+
+struct bpf_sk_storage;
 
 /**
   *	struct sock - network layer representation of sockets
@@ -483,6 +485,9 @@ struct sock {
 						  struct sk_buff *skb);
 	void                    (*sk_destruct)(struct sock *sk);
 	struct sock_reuseport __rcu	*sk_reuseport_cb;
+#ifdef CONFIG_BPF_SYSCALL
+	struct bpf_sk_storage __rcu	*sk_bpf_storage;
+#endif
 	struct rcu_head		sk_rcu;
 };
 
@@ -735,6 +740,8 @@ static inline void sk_add_bind_node(struct sock *sk,
 	hlist_for_each_entry_safe(__sk, tmp, list, sk_node)
 #define sk_for_each_bound(__sk, list) \
 	hlist_for_each_entry(__sk, list, sk_bind_node)
+#define sk_for_each_bound_safe(__sk, tmp, list) \
+	hlist_for_each_entry_safe(__sk, tmp, list, sk_bind_node)
 
 /**
  * sk_for_each_entry_offset_rcu - iterate over a list at a given struct offset
@@ -1049,6 +1056,9 @@ static inline void sk_prot_clear_nulls(struct sock *sk, int size)
 struct proto {
 	void			(*close)(struct sock *sk,
 					long timeout);
+	int			(*pre_connect)(struct sock *sk,
+					struct sockaddr *uaddr,
+					int addr_len);
 	int			(*connect)(struct sock *sk,
 					struct sockaddr *uaddr,
 					int addr_len);
@@ -1108,6 +1118,7 @@ struct proto {
 #endif
 
 	bool			(*stream_memory_free)(const struct sock *sk);
+	bool			(*stream_memory_read)(const struct sock *sk);
 	/* Memory pressure */
 	void			(*enter_memory_pressure)(struct sock *sk);
 	void			(*leave_memory_pressure)(struct sock *sk);
@@ -1156,6 +1167,7 @@ struct proto {
 
 int proto_register(struct proto *prot, int alloc_slab);
 void proto_unregister(struct proto *prot);
+int sock_load_diag_module(int family, int protocol);
 
 #ifdef SOCK_REFCNT_DEBUG
 static inline void sk_refcnt_debug_inc(struct sock *sk)
@@ -1537,6 +1549,13 @@ static inline void sock_owned_by_me(const struct sock *sk)
 #endif
 }
 
+static inline void sock_not_owned_by_me(const struct sock *sk)
+{
+#ifdef CONFIG_LOCKDEP
+	WARN_ON_ONCE(lockdep_sock_is_held(sk) && debug_locks);
+#endif
+}
+
 static inline bool sock_owned_by_user(const struct sock *sk)
 {
 	sock_owned_by_me(sk);
@@ -1694,17 +1713,25 @@ static inline int sk_receive_skb(struct sock *sk, struct sk_buff *skb,
 
 static inline void sk_tx_queue_set(struct sock *sk, int tx_queue)
 {
+	/* sk_tx_queue_mapping accept only upto a 16-bit value */
+	if (WARN_ON_ONCE((unsigned short)tx_queue >= USHRT_MAX))
+		return;
 	sk->sk_tx_queue_mapping = tx_queue;
 }
 
+#define NO_QUEUE_MAPPING	USHRT_MAX
+
 static inline void sk_tx_queue_clear(struct sock *sk)
 {
-	sk->sk_tx_queue_mapping = -1;
+	sk->sk_tx_queue_mapping = NO_QUEUE_MAPPING;
 }
 
 static inline int sk_tx_queue_get(const struct sock *sk)
 {
-	return sk ? sk->sk_tx_queue_mapping : -1;
+	if (sk && sk->sk_tx_queue_mapping != NO_QUEUE_MAPPING)
+		return sk->sk_tx_queue_mapping;
+
+	return -1;
 }
 
 static inline void sk_set_socket(struct sock *sk, struct socket *sock)
@@ -1795,19 +1822,12 @@ sk_dst_get(struct sock *sk)
 
 static inline void dst_negative_advice(struct sock *sk)
 {
-	struct dst_entry *ndst, *dst = __sk_dst_get(sk);
+	struct dst_entry *dst = __sk_dst_get(sk);
 
 	sk_rethink_txhash(sk);
 
-	if (dst && dst->ops->negative_advice) {
-		ndst = dst->ops->negative_advice(dst);
-
-		if (ndst != dst) {
-			rcu_assign_pointer(sk->sk_dst_cache, ndst);
-			sk_tx_queue_clear(sk);
-			WRITE_ONCE(sk->sk_dst_pending_confirm, 0);
-		}
-	}
+	if (dst && dst->ops->negative_advice)
+		dst->ops->negative_advice(sk, dst);
 }
 
 static inline void
@@ -2083,6 +2103,8 @@ void sk_reset_timer(struct sock *sk, struct timer_list *timer,
 		    unsigned long expires);
 
 void sk_stop_timer(struct sock *sk, struct timer_list *timer);
+
+void sk_stop_timer_sync(struct sock *sk, struct timer_list *timer);
 
 int __sk_queue_drop_skb(struct sock *sk, struct sk_buff_head *sk_queue,
 			struct sk_buff *skb, unsigned int flags,
@@ -2487,5 +2509,26 @@ extern __u32 sysctl_rmem_default;
 
 /* On 32bit arches, an skb frag is limited to 2^15 */
 #define SKB_FRAG_PAGE_ORDER	get_order(32768)
+
+/* Default TCP Small queue budget is ~1 ms of data (1sec >> 10)
+ * Some wifi drivers need to tweak it to get more chunks.
+ * They can use this helper from their ndo_start_xmit()
+ */
+static inline void sk_pacing_shift_update(struct sock *sk, int val)
+{
+	if (!sk || !sk_fullsock(sk) || sk->sk_pacing_shift == val)
+		return;
+	sk->sk_pacing_shift = val;
+}
+/* SOCKEV Notifier Events */
+#define SOCKEV_SOCKET   0x00
+#define SOCKEV_BIND     0x01
+#define SOCKEV_LISTEN   0x02
+#define SOCKEV_ACCEPT   0x03
+#define SOCKEV_CONNECT  0x04
+#define SOCKEV_SHUTDOWN 0x05
+
+int sockev_register_notify(struct notifier_block *nb);
+int sockev_unregister_notify(struct notifier_block *nb);
 
 #endif	/* _SOCK_H */

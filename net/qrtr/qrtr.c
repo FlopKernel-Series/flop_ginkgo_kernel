@@ -806,9 +806,11 @@ int qrtr_endpoint_post(struct qrtr_endpoint *ep, const void *data, size_t len)
 		cb->dst_node = le32_to_cpu(v1->dst_node_id);
 		cb->dst_port = le32_to_cpu(v1->dst_port_id);
 
-	skb = __netdev_alloc_skb(NULL, len, GFP_ATOMIC | __GFP_NOWARN);
-	if (!skb)
-		return -ENOMEM;
+		size = le32_to_cpu(v1->size);
+		break;
+	case QRTR_PROTO_VER_2:
+		v2 = data;
+		hdrlen = sizeof(*v2) + v2->optlen;
 
 		cb->type = v2->type;
 		cb->confirm_rx = !!(v2->flags & QRTR_FLAGS_CONFIRM_RX);
@@ -1542,7 +1544,7 @@ static int qrtr_bcast_enqueue(struct qrtr_node *node, struct sk_buff *skb,
 	list_for_each_entry(node, &qrtr_all_epts, item) {
 		if (node->nid == QRTR_EP_NID_AUTO && type != QRTR_TYPE_HELLO)
 			continue;
-		skbn = skb_clone(skb, GFP_KERNEL);
+		skbn = pskb_copy(skb, GFP_KERNEL);
 		if (!skbn)
 			break;
 		skb_set_owner_w(skbn, skb->sk);

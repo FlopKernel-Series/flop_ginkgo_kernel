@@ -135,9 +135,13 @@ static void __local_bh_enable(unsigned int cnt)
 {
 	WARN_ON_ONCE(!irqs_disabled());
 
+	if (preempt_count() == cnt)
+		trace_preempt_on(CALLER_ADDR0, get_lock_parent_ip());
+
 	if (softirq_count() == (cnt & SOFTIRQ_MASK))
 		trace_softirqs_on(_RET_IP_);
-	preempt_count_sub(cnt);
+
+	__preempt_count_sub(cnt);
 }
 
 /*
@@ -303,6 +307,8 @@ restart:
 
 	__this_cpu_write(active_softirqs, 0);
 	rcu_bh_qs();
+	if (__this_cpu_read(ksoftirqd) == current)
+		rcu_softirq_qs();
 	local_irq_disable();
 
 	pending = local_softirq_pending();

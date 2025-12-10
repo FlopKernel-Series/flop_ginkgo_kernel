@@ -136,6 +136,7 @@
 
 #include <linux/filter.h>
 #include <net/sock_reuseport.h>
+#include <net/bpf_sk_storage.h>
 
 #include <trace/events/sock.h>
 
@@ -224,7 +225,8 @@ static struct lock_class_key af_family_kern_slock_keys[AF_MAX];
   x "AF_RXRPC" ,	x "AF_ISDN"     ,	x "AF_PHONET"   , \
   x "AF_IEEE802154",	x "AF_CAIF"	,	x "AF_ALG"      , \
   x "AF_NFC"   ,	x "AF_VSOCK"    ,	x "AF_KCM"      , \
-  x "AF_QIPCRTR",	x "AF_SMC"	,	x "AF_MAX"
+  x "AF_QIPCRTR",	x "AF_SMC"	,	x "AF_XDP"	, \
+  x "AF_MAX"
 
 static const char *const af_family_key_strings[AF_MAX+1] = {
 	_sock_locks("sk_lock-")
@@ -260,7 +262,8 @@ static const char *const af_family_rlock_key_strings[AF_MAX+1] = {
   "rlock-AF_RXRPC" , "rlock-AF_ISDN"     , "rlock-AF_PHONET"   ,
   "rlock-AF_IEEE802154", "rlock-AF_CAIF" , "rlock-AF_ALG"      ,
   "rlock-AF_NFC"   , "rlock-AF_VSOCK"    , "rlock-AF_KCM"      ,
-  "rlock-AF_QIPCRTR", "rlock-AF_SMC"     , "rlock-AF_MAX"
+  "rlock-AF_QIPCRTR", "rlock-AF_SMC"     , "rlock-AF_XDP"      ,
+  "rlock-AF_MAX"
 };
 static const char *const af_family_wlock_key_strings[AF_MAX+1] = {
   "wlock-AF_UNSPEC", "wlock-AF_UNIX"     , "wlock-AF_INET"     ,
@@ -277,7 +280,8 @@ static const char *const af_family_wlock_key_strings[AF_MAX+1] = {
   "wlock-AF_RXRPC" , "wlock-AF_ISDN"     , "wlock-AF_PHONET"   ,
   "wlock-AF_IEEE802154", "wlock-AF_CAIF" , "wlock-AF_ALG"      ,
   "wlock-AF_NFC"   , "wlock-AF_VSOCK"    , "wlock-AF_KCM"      ,
-  "wlock-AF_QIPCRTR", "wlock-AF_SMC"     , "wlock-AF_MAX"
+  "wlock-AF_QIPCRTR", "wlock-AF_SMC"     , "wlock-AF_XDP"      ,
+  "wlock-AF_MAX"
 };
 static const char *const af_family_elock_key_strings[AF_MAX+1] = {
   "elock-AF_UNSPEC", "elock-AF_UNIX"     , "elock-AF_INET"     ,
@@ -294,7 +298,8 @@ static const char *const af_family_elock_key_strings[AF_MAX+1] = {
   "elock-AF_RXRPC" , "elock-AF_ISDN"     , "elock-AF_PHONET"   ,
   "elock-AF_IEEE802154", "elock-AF_CAIF" , "elock-AF_ALG"      ,
   "elock-AF_NFC"   , "elock-AF_VSOCK"    , "elock-AF_KCM"      ,
-  "elock-AF_QIPCRTR", "elock-AF_SMC"     , "elock-AF_MAX"
+  "elock-AF_QIPCRTR", "elock-AF_SMC"     , "elock-AF_XDP"      ,
+  "elock-AF_MAX"
 };
 
 /*
@@ -442,7 +447,7 @@ int __sock_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
 	unsigned long flags;
 	struct sk_buff_head *list = &sk->sk_receive_queue;
 
-	if (atomic_read(&sk->sk_rmem_alloc) >= sk->sk_rcvbuf) {
+	if (atomic_read(&sk->sk_rmem_alloc) >= READ_ONCE(sk->sk_rcvbuf)) {
 		atomic_inc(&sk->sk_drops);
 		trace_sock_rcvqueue_full(sk, skb);
 		return -ENOMEM;
@@ -494,7 +499,7 @@ int __sk_receive_skb(struct sock *sk, struct sk_buff *skb,
 
 	skb->dev = NULL;
 
-	if (sk_rcvqueues_full(sk, sk->sk_rcvbuf)) {
+	if (sk_rcvqueues_full(sk, READ_ONCE(sk->sk_rcvbuf))) {
 		atomic_inc(&sk->sk_drops);
 		goto discard_and_relse;
 	}
@@ -1583,6 +1588,10 @@ static void __sk_destruct(struct rcu_head *head)
 
 	sock_disable_timestamp(sk, SK_FLAGS_TIMESTAMP);
 
+#ifdef CONFIG_BPF_SYSCALL
+	bpf_sk_storage_free(sk);
+#endif
+
 	if (atomic_read(&sk->sk_omem_alloc))
 		pr_debug("%s: optmem leakage (%d bytes) detected\n",
 			 __func__, atomic_read(&sk->sk_omem_alloc));
@@ -1733,6 +1742,12 @@ struct sock *sk_clone_lock(const struct sock *sk, const gfp_t priority)
 			goto out;
 		}
 		RCU_INIT_POINTER(newsk->sk_reuseport_cb, NULL);
+
+		if (bpf_sk_storage_clone(sk, newsk)) {
+			sk_free_unlock_clone(newsk);
+			newsk = NULL;
+			goto out;
+		}
 
 		newsk->sk_err	   = 0;
 		newsk->sk_err_soft = 0;
@@ -2731,6 +2746,13 @@ void sk_stop_timer(struct sock *sk, struct timer_list* timer)
 }
 EXPORT_SYMBOL(sk_stop_timer);
 
+void sk_stop_timer_sync(struct sock *sk, struct timer_list *timer)
+{
+	if (del_timer_sync(timer))
+		__sock_put(sk);
+}
+EXPORT_SYMBOL(sk_stop_timer_sync);
+
 void sock_init_data(struct socket *sock, struct sock *sk)
 {
 	sk_init_common(sk);
@@ -2980,7 +3002,8 @@ int sock_common_getsockopt(struct socket *sock, int level, int optname,
 {
 	struct sock *sk = sock->sk;
 
-	return sk->sk_prot->getsockopt(sk, level, optname, optval, optlen);
+	/* IPV6_ADDRFORM can change sk->sk_prot under us. */
+	return READ_ONCE(sk->sk_prot)->getsockopt(sk, level, optname, optval, optlen);
 }
 EXPORT_SYMBOL(sock_common_getsockopt);
 
@@ -3021,7 +3044,8 @@ int sock_common_setsockopt(struct socket *sock, int level, int optname,
 {
 	struct sock *sk = sock->sk;
 
-	return sk->sk_prot->setsockopt(sk, level, optname, optval, optlen);
+	/* IPV6_ADDRFORM can change sk->sk_prot under us. */
+	return READ_ONCE(sk->sk_prot)->setsockopt(sk, level, optname, optval, optlen);
 }
 EXPORT_SYMBOL(sock_common_setsockopt);
 
@@ -3296,6 +3320,27 @@ void proto_unregister(struct proto *prot)
 	}
 }
 EXPORT_SYMBOL(proto_unregister);
+
+int sock_load_diag_module(int family, int protocol)
+{
+	if (!protocol) {
+		if (!sock_is_registered(family))
+			return -ENOENT;
+
+		return request_module("net-pf-%d-proto-%d-type-%d", PF_NETLINK,
+				      NETLINK_SOCK_DIAG, family);
+	}
+
+#ifdef CONFIG_INET
+	if (family == AF_INET &&
+	    !rcu_access_pointer(inet_protos[protocol]))
+		return -ENOENT;
+#endif
+
+	return request_module("net-pf-%d-proto-%d-type-%d-%d", PF_NETLINK,
+			      NETLINK_SOCK_DIAG, family, protocol);
+}
+EXPORT_SYMBOL(sock_load_diag_module);
 
 #ifdef CONFIG_PROC_FS
 static void *proto_seq_start(struct seq_file *seq, loff_t *pos)

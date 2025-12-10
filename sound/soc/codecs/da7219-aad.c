@@ -625,8 +625,10 @@ static struct da7219_aad_pdata *da7219_aad_fw_to_pdata(struct snd_soc_codec *cod
 		return NULL;
 
 	aad_pdata = devm_kzalloc(codec->dev, sizeof(*aad_pdata), GFP_KERNEL);
-	if (!aad_pdata)
+	if (!aad_pdata) {
+		fwnode_handle_put(aad_np);
 		return NULL;
+	}
 
 	aad_pdata->irq = i2c->irq;
 
@@ -650,7 +652,7 @@ static struct da7219_aad_pdata *da7219_aad_fw_to_pdata(struct snd_soc_codec *cod
 		aad_pdata->mic_det_thr =
 			da7219_aad_fw_mic_det_thr(codec, fw_val32);
 	else
-		aad_pdata->mic_det_thr = DA7219_AAD_MIC_DET_THR_500_OHMS;
+		aad_pdata->mic_det_thr = DA7219_AAD_MIC_DET_THR_200_OHMS;
 
 	if (fwnode_property_read_u32(aad_np, "dlg,jack-ins-deb", &fw_val32) >= 0)
 		aad_pdata->jack_ins_deb =
@@ -700,6 +702,8 @@ static struct da7219_aad_pdata *da7219_aad_fw_to_pdata(struct snd_soc_codec *cod
 			da7219_aad_fw_adc_1bit_rpt(codec, fw_val32);
 	else
 		aad_pdata->adc_1bit_rpt = DA7219_AAD_ADC_1BIT_RPT_1;
+
+	fwnode_handle_put(aad_np);
 
 	return aad_pdata;
 }

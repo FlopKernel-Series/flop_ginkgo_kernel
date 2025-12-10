@@ -278,37 +278,31 @@ static int help(struct sk_buff *skb, unsigned int protoff,
 	data = ib_ptr;
 	data_limit = ib_ptr + skb->len - dataoff;
 
-	/* Skip any whitespace */
-	while (data < data_limit - 10) {
-		if (*data == ' ' || *data == '\r' || *data == '\n')
-			data++;
-		else
-			break;
-	}
-
-	/* strlen("PRIVMSG x ")=10 */
-	if (data < data_limit - 10) {
-		if (strncasecmp("PRIVMSG ", data, 8))
-			goto out;
-		data += 8;
-	}
-
-	/* strlen(" :\1DCC SENT t AAAAAAAA P\1\n")=26
-	 * 7+MINMATCHLEN+strlen("t AAAAAAAA P\1\n")=26
+	/* If packet is coming from IRC server
+	 * parse the packet for different type of
+	 * messages (MOTD,NICK etc) and process
+	 * accordingly
 	 */
-	while (data < data_limit - (21 + MINMATCHLEN)) {
-		/* Find first " :", the start of message */
-		if (memcmp(data, " :", 2)) {
-			data++;
-			continue;
-		}
-		data += 2;
+	if (dir == IP_CT_DIR_REPLY) {
+		/* strlen("NICK xxxxxx")
+		 * 5+strlen("xxxxxx")=1 (minimum length of nickname)
+		 */
 
-		/* then check that place only for the DCC command */
-		if (memcmp(data, "\1DCC ", 5))
+		while (data < data_limit - 6) {
+			if (memcmp(data, " MOTD ", 6)) {
+				data++;
+				continue;
+			}
+			/* MOTD message signifies successful
+			 * registration with server
+			 */
+			tuple = &ct->tuplehash[!dir].tuple;
+			temp = search_client_by_ip(tuple);
+			if (temp && !temp->conn_to_server)
+				temp->conn_to_server = true;
+			ret = NF_ACCEPT;
 			goto out;
-		data += 5;
-		/* we have at least (21+MINMATCHLEN)-(2+5) bytes valid data left */
+		}
 
 		/* strlen("NICK :xxxxxx")
 		 * 6+strlen("xxxxxx")=1 (minimum length of nickname)
@@ -322,38 +316,13 @@ static int help(struct sk_buff *skb, unsigned int protoff,
 				data++;
 				continue;
 			}
-			data += strlen(dccprotos[i]);
-			pr_debug("DCC %s detected\n", dccprotos[i]);
-
-			/* we have at least
-			 * (21+MINMATCHLEN)-7-dccprotos[i].matchlen bytes valid
-			 * data left (== 14/13 bytes) */
-			if (parse_dcc(data, data_limit, &dcc_ip,
-				       &dcc_port, &addr_beg_p, &addr_end_p)) {
-				pr_debug("unable to parse dcc command\n");
-				continue;
-			}
-
-			pr_debug("DCC bound ip/port: %pI4:%u\n",
-				 &dcc_ip, dcc_port);
-
-			/* dcc_ip can be the internal OR external (NAT'ed) IP */
-			tuple = &ct->tuplehash[dir].tuple;
-			if ((tuple->src.u3.ip != dcc_ip &&
-			     ct->tuplehash[!dir].tuple.dst.u3.ip != dcc_ip) ||
-			    dcc_port == 0) {
-				net_warn_ratelimited("Forged DCC command from %pI4: %pI4:%u\n",
-						     &tuple->src.u3.ip,
-						     &dcc_ip, dcc_port);
-				continue;
-			}
-
-			exp = nf_ct_expect_alloc(ct);
-			if (exp == NULL) {
-				nf_ct_helper_log(skb, ct,
-						 "cannot alloc expectation");
-				ret = NF_DROP;
-				goto out;
+			data += 6;
+			nick_end = data;
+			i = 0;
+			while ((*nick_end != 0x0d) &&
+			       (*(nick_end + 1) != '\n')) {
+				nick_end++;
+				i++;
 			}
 			tuple = &ct->tuplehash[!dir].tuple;
 			temp = search_client_by_ip(tuple);
@@ -414,19 +383,43 @@ static int help(struct sk_buff *skb, unsigned int protoff,
 			ret = NF_ACCEPT;
 			goto out;
 		}
-		/* strlen("\1DCC SENT t AAAAAAAA P\1\n")=24
-		 * 5+MINMATCHLEN+strlen("t AAAAAAAA P\1\n")=14
-		 */
+
 		data = ib_ptr;
-		while (data < data_limit - (19 + MINMATCHLEN)) {
-			if (memcmp(data, "\1DCC ", 5)) {
+
+		/* Skip any whitespace */
+		while (data < data_limit - 10) {
+			if (*data == ' ' || *data == '\r' || *data == '\n')
+				data++;
+			else
+				break;
+		}
+
+		/* strlen("PRIVMSG x ")=10 */
+		if (data < data_limit - 10) {
+			if (strncasecmp("PRIVMSG ", data, 8))
+				goto out;
+			data += 8;
+		}
+
+		/* strlen(" :\1DCC SENT t AAAAAAAA P\1\n")=26
+		 * 7+MINMATCHLEN+strlen("t AAAAAAAA P\1\n")=26
+		 */
+		while (data < data_limit - (21 + MINMATCHLEN)) {
+			/* Find first " :", the start of message */
+			if (memcmp(data, " :", 2)) {
 				data++;
 				continue;
 			}
+			data += 2;
+
+			/* then check that place only for the DCC command */
+			if (memcmp(data, "\1DCC ", 5))
+				goto out;
 			data += 5;
-			/* we have at least (19+MINMATCHLEN)-5
-			 *bytes valid data left
+			/* we have at least (21+MINMATCHLEN)-(2+5)
+			 * bytes valid data left
 			 */
+
 			iph = ip_hdr(skb);
 			pr_debug("DCC found in master %pI4:%u %pI4:%u\n",
 				 &iph->saddr, ntohs(th->source),
@@ -442,8 +435,8 @@ static int help(struct sk_buff *skb, unsigned int protoff,
 				pr_debug("DCC %s detected\n", dccprotos[i]);
 
 				/* we have at least
-				 * (19+MINMATCHLEN)-5-dccprotos[i].matchlen
-				 *bytes valid data left (== 14/13 bytes)
+				 * (21+MINMATCHLEN)-7-dccprotos[i].matchlen
+				 * bytes valid data left (== 14/13 bytes)
 				 */
 				if (parse_dcc(data, data_limit, &dcc_ip,
 					      &dcc_port, &addr_beg_p,
@@ -459,8 +452,9 @@ static int help(struct sk_buff *skb, unsigned int protoff,
 				 *external (NAT'ed) IP
 				 */
 				tuple = &ct->tuplehash[dir].tuple;
-				if (tuple->src.u3.ip != dcc_ip &&
-				    tuple->dst.u3.ip != dcc_ip) {
+				if ((tuple->src.u3.ip != dcc_ip &&
+				     ct->tuplehash[!dir].tuple.dst.u3.ip != dcc_ip) ||
+				    dcc_port == 0) {
 					net_warn_ratelimited("Forged DCC command from %pI4: %pI4:%u\n",
 							     &tuple->src.u3.ip,
 							     &dcc_ip, dcc_port);

@@ -68,7 +68,7 @@
 /* SSIR defines */
 #define	PTP_SSIR_SSINC_MAX		0xff
 #define	GMAC4_PTP_SSIR_SSINC_SHIFT	16
-#define	PTP_SSIR_SNSINC_MASK		0xff
+#define	PTP_SSIR_SNSINC_MAX		0xff
 #define	GMAC4_PTP_SSIR_SNSINC_SHIFT	8
 
 #endif	/* __STMMAC_PTP_H__ */

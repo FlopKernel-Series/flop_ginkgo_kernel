@@ -427,19 +427,6 @@ int dwc3_send_gadget_ep_cmd(struct dwc3_ep *dep, unsigned cmd,
 			dwc3_writel(dwc->regs, DWC3_GUSB2PHYCFG(0), reg);
 	}
 
-	if (DWC3_DEPCMD_CMD(cmd) == DWC3_DEPCMD_STARTTRANSFER) {
-		int link_state;
-
-		link_state = dwc3_gadget_get_link_state(dwc);
-		if (link_state == DWC3_LINK_STATE_U1 ||
-		    link_state == DWC3_LINK_STATE_U2 ||
-		    link_state == DWC3_LINK_STATE_U3) {
-			ret = __dwc3_gadget_wakeup(dwc);
-			dev_WARN_ONCE(dwc->dev, ret, "wakeup failed --> %d\n",
-					ret);
-		}
-	}
-
 	dwc3_writel(dep->regs, DWC3_DEPCMDPAR0, params->param0);
 	dwc3_writel(dep->regs, DWC3_DEPCMDPAR1, params->param1);
 	dwc3_writel(dep->regs, DWC3_DEPCMDPAR2, params->param2);
@@ -2007,7 +1994,6 @@ static int dwc3_gadget_wakeup_int(struct dwc3 *dwc)
 	case DWC3_LINK_STATE_RX_DET:	/* in HS, means Early Suspend */
 	case DWC3_LINK_STATE_U3:	/* in HS, means SUSPEND */
 	case DWC3_LINK_STATE_U2:	/* in HS, means Sleep (L1) */
-	case DWC3_LINK_STATE_U1:
 	case DWC3_LINK_STATE_RESUME:
 		break;
 	case DWC3_LINK_STATE_U1:
@@ -3971,15 +3957,15 @@ static irqreturn_t dwc3_check_event_buf(struct dwc3_event_buffer *evt)
 	u32 reg;
 	ktime_t start_time;
 
-	if (pm_runtime_suspended(dwc->dev)) {
-		dwc->pending_events = true;
-		/*
-		 * Trigger runtime resume. The get() function will be balanced
-		 * after processing the pending events in dwc3_process_pending
-		 * events().
-		 */
-		pm_runtime_get(dwc->dev);
-		disable_irq_nosync(dwc->irq_gadget);
+	if (!evt)
+		return IRQ_NONE;
+
+	dwc = evt->dwc;
+	start_time = ktime_get();
+	dwc->irq_cnt++;
+
+	/* controller reset is still pending */
+	if (dwc->err_evt_seen)
 		return IRQ_HANDLED;
 
 	/*

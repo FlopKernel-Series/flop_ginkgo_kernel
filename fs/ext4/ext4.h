@@ -864,12 +864,14 @@ static inline void ext4_decode_extra_time(struct timespec *time, __le32 extra)
 	time->tv_nsec = (le32_to_cpu(extra) & EXT4_NSEC_MASK) >> EXT4_EPOCH_BITS;
 }
 
-#define EXT4_INODE_SET_XTIME(xtime, inode, raw_inode)			       \
-do {									       \
-	(raw_inode)->xtime = cpu_to_le32((inode)->xtime.tv_sec);	       \
-	if (EXT4_FITS_IN_INODE(raw_inode, EXT4_I(inode), xtime ## _extra))     \
-		(raw_inode)->xtime ## _extra =				       \
-				ext4_encode_extra_time(&(inode)->xtime);       \
+#define EXT4_INODE_SET_XTIME(xtime, inode, raw_inode)				\
+do {										\
+	(raw_inode)->xtime = cpu_to_le32((inode)->xtime.tv_sec);		\
+	if (EXT4_FITS_IN_INODE(raw_inode, EXT4_I(inode), xtime ## _extra))     {\
+		struct timespec ts = timespec64_to_timespec((inode)->xtime);	\
+		(raw_inode)->xtime ## _extra =					\
+				ext4_encode_extra_time(&ts);			\
+		}								\
 } while (0)
 
 #define EXT4_EINODE_SET_XTIME(xtime, einode, raw_inode)			       \
@@ -881,15 +883,19 @@ do {									       \
 				ext4_encode_extra_time(&(einode)->xtime);      \
 } while (0)
 
-#define EXT4_INODE_GET_XTIME(xtime, inode, raw_inode)			       \
-do {									       \
-	(inode)->xtime.tv_sec = (signed)le32_to_cpu((raw_inode)->xtime);       \
-	if (EXT4_FITS_IN_INODE(raw_inode, EXT4_I(inode), xtime ## _extra))     \
-		ext4_decode_extra_time(&(inode)->xtime,			       \
-				       raw_inode->xtime ## _extra);	       \
-	else								       \
-		(inode)->xtime.tv_nsec = 0;				       \
+#define EXT4_INODE_GET_XTIME(xtime, inode, raw_inode)				\
+do {										\
+	(inode)->xtime.tv_sec = (signed)le32_to_cpu((raw_inode)->xtime);	\
+	if (EXT4_FITS_IN_INODE(raw_inode, EXT4_I(inode), xtime ## _extra)) {	\
+		struct timespec ts = timespec64_to_timespec((inode)->xtime);	\
+		ext4_decode_extra_time(&ts,					\
+				       raw_inode->xtime ## _extra);		\
+		(inode)->xtime = timespec_to_timespec64(ts);			\
+		}								\
+	else									\
+		(inode)->xtime.tv_nsec = 0;					\
 } while (0)
+
 
 #define EXT4_EINODE_GET_XTIME(xtime, einode, raw_inode)			       \
 do {									       \
@@ -1436,7 +1442,7 @@ struct ext4_sb_info {
 	unsigned long s_commit_interval;
 	u32 s_max_batch_time;
 	u32 s_min_batch_time;
-	struct block_device *journal_bdev;
+	struct block_device *s_journal_bdev;
 #ifdef CONFIG_QUOTA
 	/* Names of quota files with journalled quota */
 	char __rcu *s_qf_names[EXT4_MAXQUOTAS];
@@ -2519,17 +2525,16 @@ extern int __ext4_check_dir_entry(const char *, unsigned int, struct inode *,
 				  struct file *,
 				  struct ext4_dir_entry_2 *,
 				  struct buffer_head *, char *, int,
-				  ext4_lblk_t, unsigned int);
-#define ext4_check_dir_entry(dir, filp, de, bh, buf, size, lblk, offset) \
+				  unsigned int);
+#define ext4_check_dir_entry(dir, filp, de, bh, buf, size, offset) \
 	unlikely(__ext4_check_dir_entry(__func__, __LINE__, (dir), (filp), \
-				(de), (bh), (buf), (size), (lblk), (offset)))
+				(de), (bh), (buf), (size), (offset)))
 extern int ext4_htree_store_dirent(struct file *dir_file, __u32 hash,
 				__u32 minor_hash,
 				struct ext4_dir_entry_2 *dirent,
 				struct fscrypt_str *ent_name);
 extern void ext4_htree_free_dir_info(struct dir_private_info *p);
 extern int ext4_find_dest_de(struct inode *dir, struct inode *inode,
-			     ext4_lblk_t lblk,
 			     struct buffer_head *bh,
 			     void *buf, int buf_size,
 			     struct ext4_filename *fname,
@@ -2720,12 +2725,11 @@ extern int ext4_search_dir(struct buffer_head *bh,
 			   int buf_size,
 			   struct inode *dir,
 			   struct ext4_filename *fname,
-			   ext4_lblk_t lblk, unsigned int offset,
+			   unsigned int offset,
 			   struct ext4_dir_entry_2 **res_dir);
 extern int ext4_generic_delete_entry(handle_t *handle,
 				     struct inode *dir,
 				     struct ext4_dir_entry_2 *de_del,
-				     ext4_lblk_t lblk,
 				     struct buffer_head *bh,
 				     void *entry_buf,
 				     int buf_size,

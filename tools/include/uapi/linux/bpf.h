@@ -14,6 +14,7 @@
 /* Extended instruction set based on top of classic BPF */
 
 /* instruction classes */
+#define BPF_JMP32	0x06	/* jmp mode in word width */
 #define BPF_ALU64	0x07	/* alu mode in double word width */
 
 /* ld/ldx fields */
@@ -112,8 +113,17 @@ enum bpf_map_type {
 	BPF_MAP_TYPE_HASH_OF_MAPS,
 	BPF_MAP_TYPE_DEVMAP,
 	BPF_MAP_TYPE_SOCKMAP,
+	BPF_MAP_TYPE_CPUMAP,
 };
 
+/* Note that tracing related programs such as
+ * BPF_PROG_TYPE_{KPROBE,TRACEPOINT,PERF_EVENT,RAW_TRACEPOINT}
+ * are not subject to a stable API since kernel internal data
+ * structures can change from release to release and may
+ * therefore break existing tracing BPF programs. Tracing BPF
+ * programs correspond to /a/ specific kernel which is to be
+ * analyzed, and not /a/ specific kernel /and/ all future ones.
+ */
 enum bpf_prog_type {
 	BPF_PROG_TYPE_UNSPEC,
 	BPF_PROG_TYPE_SOCKET_FILTER,
@@ -209,7 +219,7 @@ union bpf_attr {
 		__u32		log_level;	/* verbosity level of verifier */
 		__u32		log_size;	/* size of user buffer */
 		__aligned_u64	log_buf;	/* user supplied buffer */
-		__u32		kern_version;	/* checked when prog_type=kprobe */
+		__u32		kern_version;	/* not used */
 		__u32		prog_flags;
 	};
 
@@ -639,6 +649,78 @@ union bpf_attr {
 	FN(redirect_map),		\
 	FN(sk_redirect_map),		\
 	FN(sock_map_update),		\
+	FN(xdp_adjust_meta),		\
+	FN(perf_event_read_value),	\
+	FN(perf_prog_read_value),	\
+	FN(getsockopt),			\
+	FN(override_return),		\
+	FN(sock_ops_cb_flags_set),	\
+	FN(msg_redirect_map),		\
+	FN(msg_apply_bytes),		\
+	FN(msg_cork_bytes),		\
+	FN(msg_pull_data),		\
+	FN(bind),			\
+	FN(xdp_adjust_tail),		\
+	FN(skb_get_xfrm_state),		\
+	FN(get_stack),			\
+	FN(skb_load_bytes_relative),	\
+	FN(fib_lookup),			\
+	FN(sock_hash_update),		\
+	FN(msg_redirect_hash),		\
+	FN(sk_redirect_hash),		\
+	FN(lwt_push_encap),		\
+	FN(lwt_seg6_store_bytes),	\
+	FN(lwt_seg6_adjust_srh),	\
+	FN(lwt_seg6_action),		\
+	FN(rc_repeat),			\
+	FN(rc_keydown),			\
+	FN(skb_cgroup_id),		\
+	FN(get_current_cgroup_id),	\
+	FN(get_local_storage),		\
+	FN(sk_select_reuseport),	\
+	FN(skb_ancestor_cgroup_id),	\
+	FN(sk_lookup_tcp),		\
+	FN(sk_lookup_udp),		\
+	FN(sk_release),			\
+	FN(map_push_elem),		\
+	FN(map_pop_elem),		\
+	FN(map_peek_elem),		\
+	FN(msg_push_data),		\
+	FN(msg_pop_data),		\
+	FN(rc_pointer_rel),		\
+	FN(spin_lock),			\
+	FN(spin_unlock),		\
+	FN(sk_fullsock),		\
+	FN(tcp_sock),			\
+	FN(skb_ecn_set_ce),		\
+	FN(get_listener_sock),		\
+	FN(skc_lookup_tcp),		\
+	FN(tcp_check_syncookie),	\
+	FN(sysctl_get_name),		\
+	FN(sysctl_get_current_value),	\
+	FN(sysctl_get_new_value),	\
+	FN(sysctl_set_new_value),	\
+	FN(strtol),			\
+	FN(strtoul),			\
+	FN(sk_storage_get),		\
+	FN(sk_storage_delete),		\
+	FN(send_signal),		\
+	FN(tcp_gen_syncookie),		\
+	FN(skb_output),			\
+	FN(probe_read_user),		\
+	FN(probe_read_kernel),		\
+	FN(probe_read_user_str),	\
+	FN(probe_read_kernel_str),	\
+	FN(tcp_send_ack),		\
+	FN(send_signal_thread),		\
+	FN(jiffies64),			\
+	FN(read_branch_records),	\
+	FN(get_ns_current_pid_tgid),	\
+	FN(xdp_output),			\
+	FN(get_netns_cookie),		\
+	FN(get_current_ancestor_cgroup_id),	\
+	FN(sk_assign),			\
+	FN(ktime_get_boot_ns),
 
 /* integer value in 'imm' field of BPF_CALL instruction selects which helper
  * function eBPF program intends to call
