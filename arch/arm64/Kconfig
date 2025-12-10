@@ -503,7 +503,7 @@ config ARM64_ERRATUM_1024718
 	help
 	  This option adds work around for Arm Cortex-A55 Erratum 1024718.
 
-	  Affected Cortex-A55 cores (r0p0, r0p1, r1p0) could cause incorrect
+	  Affected Cortex-A55 cores (all revisions) could cause incorrect
 	  update of the hardware dirty bit when the DBM/AP bits are updated
 	  without a break-before-make. The work around is to disable the usage
 	  of hardware DBM locally on the affected cores. CPUs not affected by
@@ -511,31 +511,33 @@ config ARM64_ERRATUM_1024718
 
 	  If unsure, say Y.
 
-config ARM64_ERRATUM_1286807
-	bool "Cortex-A76: Modification of the translation table for a virtual address might lead to read-after-read ordering violation"
-	default n
-	select ARM64_WORKAROUND_REPEAT_TLBI
-	help
-	  This option adds workaround for ARM Cortex-A76 erratum 1286807
-
-	  On the affected Cortex-A76 cores (r0p0 to r3p0), if a virtual
-	  address for a cacheable mapping of a location is being
-	  accessed by a core while another core is remapping the virtual
-	  address to a new physical page using the recommended
-	  break-before-make sequence, then under very rare circumstances
-	  TLBI+DSB completes before a read using the translation being
-	  invalidated has been observed by other observers. The
-	  workaround repeats the TLBI+DSB operation.
-
 config ARM64_ERRATUM_1188873
 	bool "Cortex-A76: MRC read following MRRC read of specific Generic Timer in AArch32 might give incorrect result"
 	default y
+	depends on COMPAT
+	select ARM_ARCH_TIMER_OOL_WORKAROUND
 	help
 	  This option adds work arounds for ARM Cortex-A76 erratum 1188873
 
 	  Affected Cortex-A76 cores (r0p0, r1p0, r2p0) could cause
 	  register corruption when accessing the timer registers from
 	  AArch32 userspace.
+
+	  If unsure, say Y.
+
+config ARM64_ERRATUM_1742098
+	bool "Cortex-A57/A72: 1742098: ELR recorded incorrectly on interrupt taken between cryptographic instructions in a sequence"
+	depends on COMPAT
+	default y
+	help
+	  This option removes the AES hwcap for aarch32 user-space to
+	  workaround erratum 1742098 on Cortex-A57 and Cortex-A72.
+
+	  Affected parts may corrupt the AES state if an interrupt is
+	  taken between a pair of AES instructions. These instructions
+	  are only present if the cryptography extensions are present.
+	  All software should have a fallback implementation for CPUs
+	  that don't implement the cryptography extensions.
 
 	  If unsure, say Y.
 
@@ -1014,15 +1016,6 @@ config ARM64_SSBD
 	  by speculative loads.
 
 	  If unsure, say Y.
-
-config ARM64_TAGGED_ADDR_ABI
-	bool "Enable the tagged user addresses syscall ABI"
-	default y
-	help
-	  When this option is enabled, user applications can opt in to a
-	  relaxed ABI via prctl() allowing tagged addresses to be passed
-	  to system calls as pointer arguments. For details, see
-	  Documentation/arm64/tagged-address-abi.rst.
 
 config MITIGATE_SPECTRE_BRANCH_HISTORY
 	bool "Mitigate Spectre style attacks against branch history" if EXPERT

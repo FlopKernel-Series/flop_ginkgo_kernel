@@ -235,15 +235,14 @@ int thermal_build_list_of_policies(char *buf)
 {
 	struct thermal_governor *pos;
 	ssize_t count = 0;
-	ssize_t size = PAGE_SIZE;
 
 	mutex_lock(&thermal_governor_lock);
 
 	list_for_each_entry(pos, &thermal_governor_list, governor_list) {
-		size = PAGE_SIZE - count;
-		count += scnprintf(buf + count, size, "%s ", pos->name);
+		count += scnprintf(buf + count, PAGE_SIZE - count, "%s ",
+				   pos->name);
 	}
-	count += scnprintf(buf + count, size, "\n");
+	count += scnprintf(buf + count, PAGE_SIZE - count, "\n");
 
 	mutex_unlock(&thermal_governor_lock);
 
@@ -477,6 +476,8 @@ static void thermal_zone_device_init(struct thermal_zone_device *tz)
 {
 	struct thermal_instance *pos;
 	tz->temperature = THERMAL_TEMP_INVALID;
+	tz->prev_low_trip = -INT_MAX;
+	tz->prev_high_trip = INT_MAX;
 	list_for_each_entry(pos, &tz->thermal_instances, tz_node)
 		pos->initialized = false;
 }
@@ -795,7 +796,8 @@ int thermal_zone_bind_cooling_device(struct thermal_zone_device *tz,
 	if (result)
 		goto release_ida;
 
-	sprintf(dev->attr_name, "cdev%d_trip_point", dev->id);
+	snprintf(dev->attr_name, sizeof(dev->attr_name), "cdev%d_trip_point",
+		 dev->id);
 	sysfs_attr_init(&dev->attr.attr);
 	dev->attr.attr.name = dev->attr_name;
 	dev->attr.attr.mode = 0444;
@@ -804,29 +806,8 @@ int thermal_zone_bind_cooling_device(struct thermal_zone_device *tz,
 	if (result)
 		goto remove_symbol_link;
 
-	snprintf(dev->upper_attr_name, THERMAL_NAME_LENGTH,
-			"cdev%d_upper_limit", dev->id);
-	sysfs_attr_init(&dev->upper_attr.attr);
-	dev->upper_attr.attr.name = dev->upper_attr_name;
-	dev->upper_attr.attr.mode = 0644;
-	dev->upper_attr.show = thermal_cooling_device_upper_limit_show;
-	dev->upper_attr.store = thermal_cooling_device_upper_limit_store;
-	result = device_create_file(&tz->device, &dev->upper_attr);
-	if (result)
-		goto remove_trip_file;
-
-	snprintf(dev->lower_attr_name, THERMAL_NAME_LENGTH,
-			"cdev%d_lower_limit", dev->id);
-	sysfs_attr_init(&dev->lower_attr.attr);
-	dev->lower_attr.attr.name = dev->lower_attr_name;
-	dev->lower_attr.attr.mode = 0644;
-	dev->lower_attr.show = thermal_cooling_device_lower_limit_show;
-	dev->lower_attr.store = thermal_cooling_device_lower_limit_store;
-	result = device_create_file(&tz->device, &dev->lower_attr);
-	if (result)
-		goto remove_upper_file;
-
-	sprintf(dev->weight_attr_name, "cdev%d_weight", dev->id);
+	snprintf(dev->weight_attr_name, sizeof(dev->weight_attr_name),
+		 "cdev%d_weight", dev->id);
 	sysfs_attr_init(&dev->weight_attr.attr);
 	dev->weight_attr.attr.name = dev->weight_attr_name;
 	dev->weight_attr.attr.mode = S_IWUSR | S_IRUGO;
@@ -1393,7 +1374,7 @@ free_tz:
 EXPORT_SYMBOL_GPL(thermal_zone_device_register);
 
 /**
- * thermal_device_unregister - removes the registered thermal zone device
+ * thermal_zone_device_unregister - removes the registered thermal zone device
  * @tz: the thermal zone device to remove
  */
 void thermal_zone_device_unregister(struct thermal_zone_device *tz)

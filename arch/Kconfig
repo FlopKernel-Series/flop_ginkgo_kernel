@@ -237,6 +237,9 @@ config ARCH_HAS_FORTIFY_SOURCE
 config ARCH_HAS_SET_MEMORY
 	bool
 
+config ARCH_HAS_CPU_FINALIZE_INIT
+	bool
+
 # Select if arch init_task initializer is different to init/init_task.c
 config ARCH_INIT_TASK
        bool
@@ -338,6 +341,13 @@ config HAVE_RCU_TABLE_FREE
 
 config HAVE_RCU_TABLE_INVALIDATE
 	bool
+
+config ARCH_WANT_IRQS_OFF_ACTIVATE_MM
+	bool
+	help
+	  Temporary select until all architectures can be converted to have
+	  irqs disabled over activate_mm. Architectures that do IPI based TLB
+	  shootdowns should enable this.
 
 config ARCH_HAVE_NMI_SAFE_CMPXCHG
 	bool
@@ -1108,18 +1118,7 @@ config HAVE_ARCH_COMPILER_H
 	  linux/compiler-*.h in order to override macro definitions that those
 	  headers generally provide.
 
-# Select if the architecture has support for applying RELR relocations.
-config ARCH_HAS_RELR
+config ARCH_USE_MEMREMAP_PROT
 	bool
-
-config RELR
-	bool "Use RELR relocation packing"
-	depends on ARCH_HAS_RELR && TOOLS_SUPPORT_RELR
-	default y
-	help
-	  Store the kernel's dynamic relocations in the RELR relocation packing
-	  format. Requires a compatible linker (LLD supports this feature), as
-	  well as compatible NM and OBJCOPY utilities (llvm-nm and llvm-objcopy
-	  are compatible).
 
 source "kernel/gcov/Kconfig"

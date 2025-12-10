@@ -370,37 +370,19 @@ int fscrypt_fname_disk_to_usr(const struct inode *inode,
 	if (fscrypt_has_encryption_key(inode))
 		return fname_decrypt(inode, iname, oname);
 
-	/*
-	 * Sanity check that struct fscrypt_nokey_name doesn't have padding
-	 * between fields and that its encoded size never exceeds NAME_MAX.
-	 */
-	BUILD_BUG_ON(offsetofend(struct fscrypt_nokey_name, dirhash) !=
-		     offsetof(struct fscrypt_nokey_name, bytes));
-	BUILD_BUG_ON(offsetofend(struct fscrypt_nokey_name, bytes) !=
-		     offsetof(struct fscrypt_nokey_name, sha256));
-	BUILD_BUG_ON(BASE64_CHARS(FSCRYPT_NOKEY_NAME_MAX) > NAME_MAX);
-
-	if (hash) {
-		nokey_name.dirhash[0] = hash;
-		nokey_name.dirhash[1] = minor_hash;
-	} else {
-		nokey_name.dirhash[0] = 0;
-		nokey_name.dirhash[1] = 0;
+	if (iname->len <= FSCRYPT_FNAME_MAX_UNDIGESTED_SIZE) {
+		oname->len = digest_encode(iname->name, iname->len,
+					   oname->name);
+		return 0;
 	}
-	if (iname->len <= sizeof(nokey_name.bytes)) {
-		memcpy(nokey_name.bytes, iname->name, iname->len);
-		size = offsetof(struct fscrypt_nokey_name, bytes[iname->len]);
-	} else {
-		memcpy(nokey_name.bytes, iname->name, sizeof(nokey_name.bytes));
-		/* Compute strong hash of remaining part of name. */
-		err = fscrypt_do_sha256(&iname->name[sizeof(nokey_name.bytes)],
-					iname->len - sizeof(nokey_name.bytes),
-					nokey_name.sha256);
-		if (err)
-			return err;
-		size = FSCRYPT_NOKEY_NAME_MAX;
-	}
-	oname->len = base64_encode((const u8 *)&nokey_name, size, oname->name);
+	digested_name.hash = hash;
+	digested_name.minor_hash = minor_hash;
+	memcpy(digested_name.digest,
+	       FSCRYPT_FNAME_DIGEST(iname->name, iname->len),
+	       FSCRYPT_FNAME_DIGEST_SIZE);
+	oname->name[0] = '_';
+	oname->len = 1 + digest_encode((const char *)&digested_name,
+				       sizeof(digested_name), oname->name + 1);
 	return 0;
 }
 EXPORT_SYMBOL(fscrypt_fname_disk_to_usr);
