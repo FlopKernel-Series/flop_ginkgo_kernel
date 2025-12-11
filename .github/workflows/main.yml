@@ -1,3 +1,4 @@
+
 name: Manual Git Terminal
 
 on:
@@ -9,15 +10,14 @@ on:
         default: 'floppy-new'
         type: string
       commands:
-        description: 'Commands to run (one per line)'
+        description: 'Commands to run'
         required: true
         type: string
         default: |
           git status
-          git log -n 5 --oneline
-          # Add your commands below
-          # git commit --amend -m "New message"
-          # git push origin HEAD --force
+          # git add .
+          # git commit -m "Update via Action"
+          # git push origin HEAD
 
 permissions:
   contents: write
@@ -26,37 +26,67 @@ jobs:
   run-commands:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Target Branch
+      - name: 📥 Checkout Target Branch
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.target_branch }}
-          fetch-depth: 0 # Get full history (needed for rebase/reset)
+          fetch-depth: 0 # Crucial for git history
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure Git Identity
+      - name: 🔧 Configure Git Identity
         run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git config --global push.default simple
 
-      - name: Execute Commands
+      - name: 🚑 Fix Detached HEAD (Crucial)
+        # GitHub Actions checks out a Commit ID, not the Branch name.
+        # We MUST switch to the actual branch name for 'git push' to work automatically.
+        run: |
+          echo "Syncing local branch with remote..."
+          git checkout -B ${{ inputs.target_branch }} origin/${{ inputs.target_branch }}
+          echo "✅ Checked out branch: ${{ inputs.target_branch }}"
+
+      - name: 🚀 Execute Commands (Robust Mode)
         env:
-          # We pass the input to an ENV variable to handle multiline/quotes safely
           USER_COMMANDS: ${{ inputs.commands }}
         run: |
           echo "----------------------------------------"
-          echo "Preparing to execute commands on branch: ${{ inputs.target_branch }}"
-          echo "----------------------------------------"
-
-          # Create a shell script from the input
-          echo "$USER_COMMANDS" > run_commands.sh
+          echo "📜 Preparing Execution Script..."
+          
+          # 1. Create the script file with a Shebang
+          # 2. Inject 'set -e' (Exit immediately if any command fails)
+          # 3. Inject 'set -x' (Print commands to log before running them)
+          printf "#!/bin/bash\nset -e\nset -x\n" > run_commands.sh
+          
+          # 4. Append user commands safely
+          echo "$USER_COMMANDS" >> run_commands.sh
+          
           chmod +x run_commands.sh
 
-          # Run the script and stop if any command fails
-          # We use 'bash -e' so it stops immediately on error
-          if bash -e run_commands.sh; then
+          echo "----------------------------------------"
+          echo "🏃 Running User Commands..."
+          echo "----------------------------------------"
+          
+          # Run the script
+          if ./run_commands.sh; then
             echo "----------------------------------------"
-            echo "✅ All commands executed successfully."
+            echo "✅ SUCCESS: All commands finished without error."
           else
             echo "----------------------------------------"
-            echo "❌ A command failed. Workflow stopped."
+            echo "❌ FAILURE: A command returned an error code."
             exit 1
+          fi
+
+      - name: 🔎 Verify Push (Safety Check)
+        if: success()
+        run: |
+          # This step checks if you committed but forgot to push
+          UNPUSHED_COUNT=$(git rev-list --count origin/${{ inputs.target_branch }}..${{ inputs.target_branch }})
+          if [ "$UNPUSHED_COUNT" -gt 0 ]; then
+             echo "⚠️  WARNING: You have $UNPUSHED_COUNT commit(s) created but NOT pushed."
+             echo "👉  Did you forget to add 'git push origin HEAD' to your input commands?"
+             exit 1
+          else
+             echo "✅  Git Status: Clean. Remote is up to date."
           fi
