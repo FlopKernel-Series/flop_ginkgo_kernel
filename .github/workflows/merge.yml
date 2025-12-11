@@ -1,4 +1,4 @@
-name: 🧠 merge branch
+name: 🧠 merge branch 
 
 on:
   workflow_dispatch:
@@ -12,166 +12,266 @@ on:
         required: true
         default: 'main'
       target_branch:
-        description: 'Target Branch (Your repo)'
+        description: 'Target Branch'
         required: true
         default: 'floppy-new'
+      
+      # --- AI CONFIG ---
+      ai_provider:
+        description: 'AI Provider'
+        required: true
+        default: 'gemini'
+        type: choice
+        options:
+          - gemini          # Best for large context (Context Window is key here)
+          - openai          # Standard
+      
       ai_api_key:
-        description: 'AI API Key (OpenAI/Gemini/DeepSeek). Leave empty for Offline Mode.'
-        required: false
-      ai_base_url:
-        description: 'AI Base URL (Default: OpenAI)'
-        required: false
-        default: 'https://api.openai.com/v1'
+        description: 'AI API Key'
+        required: true # Required for the Agent loop to work
+      
       ai_model:
         description: 'Model Name'
         required: false
-        default: 'gpt-4o'
+        default: 'gemini-1.5-flash'
 
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
-  neural_merge:
+  agentic_merge:
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      AI_PROVIDER: ${{ inputs.ai_provider }}
       AI_KEY: ${{ inputs.ai_api_key }}
-      AI_URL: ${{ inputs.ai_base_url }}
       AI_MODEL: ${{ inputs.ai_model }}
-      
+
     steps:
-      # --- PHASE 1: PREPARATION (From Logger.yml) ---
-      - name: 🧹 Disk Cleanup & Setup
+      # 1. SETUP
+      - name: 🛡️ Harden Environment
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends git python3-pip python3-requests libncurses-dev
+          sudo apt-get install -y --no-install-recommends git python3-pip python3-requests
+          pip3 install requests
 
       - name: 📥 Checkout Source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: ⚙️ Configure Git & Environment
+      - name: ⚙️ Configure Git
         run: |
-          git config --global user.name "Neural-Bot"
-          git config --global user.email "bot@floppykernel.ai"
+          git config --global user.name "Apex-Agent"
+          git config --global user.email "agent@floppykernel.ai"
           git config merge.renameLimit 999999
           
-          # SAFETY: Prevent binary corruption
+          # BINARY GUARD: Protect kernel blobs
           echo "* -text" > .gitattributes
           echo "*.png binary" >> .gitattributes
           echo "*.dtb binary" >> .gitattributes
           echo "*.gz binary" >> .gitattributes
+          echo "*.ko binary" >> .gitattributes
 
-      # --- PHASE 2: THE BRAIN (Python + AI Integration) ---
-      - name: 🧠 Inject Neural Engine
+      # 2. INJECT THE AGENT SCRIPT
+      - name: 🧠 Inject Agentic Brain (Python)
         run: |
-          cat << 'EOF' > neural_brain.py
-          import sys, os, re, time
-          import requests
+          cat << 'EOF' > agent_brain.py
+          import sys, os, re, requests, time
 
           # --- CONFIG ---
+          PROVIDER = os.environ.get("AI_PROVIDER", "gemini")
           API_KEY = os.environ.get("AI_KEY", "").strip()
-          BASE_URL = os.environ.get("AI_URL", "https://api.openai.com/v1")
-          MODEL = os.environ.get("AI_MODEL", "gpt-4o")
+          MODEL = os.environ.get("AI_MODEL", "gemini-1.5-flash")
+          MAX_RETRIES = 3
 
-          CONFLICT_PATTERN = re.compile(r'<<<<<<< HEAD\n(.*?)\n=======\n(.*?)\n>>>>>>> [a-f0-9]+', re.DOTALL)
+          def clean_ai_output(text):
+              # Strip Markdown and explanation chatter
+              text = re.sub(r'^```[a-z]*\n', '', text, flags=re.MULTILINE)
+              text = re.sub(r'\n```$', '', text, flags=re.MULTILINE)
+              return text.strip()
 
-          def ask_ai_to_resolve(local_code, remote_code, filename):
-              if not API_KEY: return None
+          def count_balance(text):
+              # Remove comments before counting
+              clean = re.sub(r'//.*', '', text)
+              clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
+              return clean.count('{') - clean.count('}')
+
+          def ask_ai(prompt):
+              if PROVIDER == "gemini":
+                  url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent?key={API_KEY}"
+                  data = {"contents": [{"parts": [{"text": prompt}]}]}
+                  try:
+                      resp = requests.post(url, json=data, timeout=40)
+                      if resp.status_code == 200:
+                          return clean_ai_output(resp.json()['candidates'][0]['content']['parts'][0]['text'])
+                      else:
+                          print(f"⚠️ Gemini API Error: {resp.text}")
+                  except Exception as e:
+                      print(f"⚠️ Network Error: {e}")
+
+              elif PROVIDER == "openai":
+                  url = "https://api.openai.com/v1/chat/completions"
+                  headers = {"Authorization": f"Bearer {API_KEY}"}
+                  data = {
+                      "model": MODEL,
+                      "messages": [{"role": "user", "content": prompt}],
+                      "temperature": 0.2
+                  }
+                  try:
+                      resp = requests.post(url, json=data, headers=headers, timeout=40)
+                      if resp.status_code == 200:
+                          return clean_ai_output(resp.json()['choices'][0]['message']['content'])
+                  except: pass
               
-              prompt = f"""
-              You are a Linux Kernel Maintainer. Resolve a git conflict in file: {filename}.
-              
-              LOCAL CODE (Ours):
-              {local_code}
-              
-              REMOTE CODE (Theirs/Upstream):
-              {remote_code}
-              
-              INSTRUCTIONS:
-              1. Return ONLY the resolved code. No markdown, no explanations.
-              2. Keep necessary logic from both if they don't conflict functionally.
-              3. Prefer Upstream for logic updates, but keep Local specific drivers/features.
-              4. Ensure C syntax is valid (brackets balanced).
-              """
-              
-              headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
-              data = {
-                  "model": MODEL,
-                  "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.2
-              }
-              
-              try:
-                  print(f"🤖 Consulting AI for {filename}...")
-                  resp = requests.post(f"{BASE_URL}/chat/completions", json=data, headers=headers, timeout=20)
-                  if resp.status_code == 200:
-                      return resp.json()['choices'][0]['message']['content'].strip().replace("```c", "").replace("```", "")
-                  else:
-                      print(f"⚠️ AI Error: {resp.text}")
-              except Exception as e:
-                  print(f"⚠️ AI Network Error: {e}")
               return None
 
-          def heuristic_resolve(match, filepath):
-              local = match.group(1)
-              remote = match.group(2)
+          def solve_conflict_block(local, remote, pre_context, post_context, filename):
+              """
+              The Agent Loop: Tries to solve, verifies, and retries if wrong.
+              """
+              current_error = ""
               
-              # 1. Whitespace/Noise Check
-              if local.strip() == remote.strip(): return local
-              
-              # 2. Brace Safety Check
-              bal_local = local.count('{') - local.count('}')
-              bal_remote = remote.count('{') - remote.count('}')
-              
-              # If Upstream is clean and we are broken, take Upstream
-              if bal_remote == 0 and bal_local != 0: return remote
-              
-              # 3. AI Escalation
-              if API_KEY:
-                  ai_fix = ask_ai_to_resolve(local, remote, filepath)
-                  if ai_fix: return ai_fix
-              
-              # 4. Fallback: If we can't solve it, keep the conflict markers 
-              # so the verifier catches it. Do not guess blindly.
-              return match.group(0) 
+              for attempt in range(1, MAX_RETRIES + 1):
+                  print(f"   🔄 Attempt {attempt}/{MAX_RETRIES}...")
+                  
+                  prompt = f"""
+                  ROLE: Expert Linux Kernel 4.14 Maintainer.
+                  TASK: Merge a Git Conflict in file '{filename}'.
+                  
+                  CONTEXT (Code before conflict):
+                  {pre_context}
+                  
+                  <<<<<<< LOCAL (Ours - Driver Logic)
+                  {local}
+                  =======
+                  >>>>>>> REMOTE (Theirs - Core Logic)
+                  {remote}
+                  
+                  CONTEXT (Code after conflict):
+                  {post_context}
+                  
+                  INSTRUCTIONS:
+                  1. Return ONLY the merged code block. NO Markdown.
+                  2. Ensure brackets {{ }} match properly with the Context.
+                  3. If lines need to move slightly to fit valid syntax, move them.
+                  4. Remove conflict markers.
+                  5. Do not hallucinate new functions. Just merge LOCAL and REMOTE.
+                  
+                  {f"PREVIOUS ERROR TO FIX: {current_error}" if current_error else ""}
+                  """
+                  
+                  solution = ask_ai(prompt)
+                  
+                  if not solution:
+                      continue
+
+                  # VERIFICATION: BRACE BALANCE
+                  # We check the balance of the SOLUTION relative to the INPUTs.
+                  # Ideally, balance(solution) should equal balance(local) or balance(remote) roughly,
+                  # but simpler is: check if it looks syntactically sane.
+                  
+                  sol_bal = count_balance(solution)
+                  
+                  # If solution is balanced (0) it's likely safe for a snippet (usually).
+                  # Or we accept it if it matches the balance of the remote block (if we are pasting inside a function).
+                  
+                  # Heuristic: If it contains '<<<<', it failed to strip markers.
+                  if "<<<<" in solution or "====" in solution:
+                      current_error = "You failed to remove git conflict markers."
+                      continue
+
+                  # Passed checks
+                  return solution
+
+              print(f"   ❌ Failed to solve after {MAX_RETRIES} attempts.")
+              return None
 
           def process_file(filepath):
               try:
                   with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                      content = f.read()
-              except: return # Skip binary
+                      lines = f.readlines()
+              except: return
 
-              original = content
-              
-              # A. Resolve Conflicts
-              if '<<<<<<< HEAD' in content:
-                  content = CONFLICT_PATTERN.sub(lambda m: heuristic_resolve(m, filepath), content)
-
-              # B. Deduplicate & Clean
-              lines = content.splitlines()
               new_lines = []
-              seen = set()
-              is_code = filepath.endswith(('.c', '.h', '.cpp', '.dtsi'))
+              i = 0
+              modified = False
               
-              for line in lines:
-                  stripped = line.strip()
-                  # Remove duplicates
-                  if is_code and (stripped.startswith('#include') or stripped.startswith('#define')):
-                      norm = re.sub(r'\s+', ' ', stripped)
-                      if norm in seen: continue
-                      seen.add(norm)
-                  new_lines.append(line)
+              while i < len(lines):
+                  line = lines[i]
+                  
+                  if line.startswith('<<<<<<<'):
+                      # Found conflict start
+                      conflict_start = i
+                      
+                      # Capture Context (Up to 20 lines before)
+                      start_ctx = max(0, conflict_start - 20)
+                      pre_context = "".join(lines[start_ctx:conflict_start])
+                      
+                      # Parse the block
+                      local_block = []
+                      remote_block = []
+                      mode = "local"
+                      i += 1
+                      
+                      while i < len(lines):
+                          if lines[i].startswith('======='):
+                              mode = "remote"
+                          elif lines[i].startswith('>>>>>>>'):
+                              break # End of conflict
+                          else:
+                              if mode == "local": local_block.append(lines[i])
+                              else: remote_block.append(lines[i])
+                          i += 1
+                      
+                      conflict_end = i
+                      
+                      # Capture Context (Up to 20 lines after)
+                      end_ctx = min(len(lines), conflict_end + 20)
+                      post_context = "".join(lines[conflict_end+1:end_ctx])
+                      
+                      # AGENT CALL
+                      print(f"🤖 Agent Analyzing Conflict at line {conflict_start} in {filepath}...")
+                      merged_block = solve_conflict_block(
+                          "".join(local_block), 
+                          "".join(remote_block), 
+                          pre_context, 
+                          post_context,
+                          filepath
+                      )
+                      
+                      if merged_block:
+                          new_lines.append(merged_block + "\n")
+                          modified = True
+                      else:
+                          # Fallback: Keep original markers if Agent failed
+                          # We do not want to destroy data if we can't fix it.
+                          new_lines.extend(lines[conflict_start:conflict_end+1])
+                          print("   ⚠️ Skipping block (Agent gave up).")
 
-              final_content = '\n'.join(new_lines) + '\n'
-              
-              if final_content != original:
+                  else:
+                      new_lines.append(line)
+                  i += 1
+
+              if modified:
+                  # DEDUPLICATION PASS (Kernel headers often duplicate)
+                  final_lines = []
+                  seen = set()
+                  for l in new_lines:
+                      stripped = l.strip()
+                      # Only dedup headers/defines
+                      if filepath.endswith(('.c','.h')) and (stripped.startswith('#include') or stripped.startswith('#define')):
+                          norm = re.sub(r'\s+', ' ', stripped)
+                          if norm in seen: continue
+                          seen.add(norm)
+                  
+                      final_lines.append(l)
+                  
                   with open(filepath, 'w', encoding='utf-8') as f:
-                      f.write(final_content)
-                  print(f"✅ Processed: {filepath}")
+                      f.writelines(final_lines)
+                  print(f"✅ File Updated: {filepath}")
 
           if __name__ == "__main__":
               files = sys.argv[1:]
@@ -179,25 +279,25 @@ jobs:
                   if os.path.exists(f): process_file(f)
           EOF
 
-      # --- PHASE 3: EXECUTION ---
-      - name: 🧬 Merge with ORT Strategy
+      # 3. MERGE (Histogram Strategy)
+      - name: 🧬 Merge (Smart Strategy)
         id: merge_step
         run: |
-          # 1. Fetch
           git remote add upstream "${{ inputs.upstream_repo }}" 2>/dev/null || true
           git fetch upstream "${{ inputs.upstream_branch }}" --no-tags --prune
+          
           if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
              git fetch --unshallow || true
           fi
 
-          # 2. Create Branch
           TS=$(date +%s)
-          TMP="ai-merge-$TS"
+          TMP="agent-merge-$TS"
           git checkout -b "$TMP" "origin/${{ inputs.target_branch }}"
           echo "tmp_branch=$TMP" >> $GITHUB_OUTPUT
 
-          # 3. Merge (Allow Failure)
-          echo ">>> Merging..."
+          echo ">>> Executing Histogram Merge..."
+          # Histogram is critical here. It prevents the "Random Location" issue
+          # by matching code structure rather than line numbers.
           set +e
           git merge "upstream/${{ inputs.upstream_branch }}" \
             --no-commit --no-ff \
@@ -206,63 +306,50 @@ jobs:
             -X ignore-all-space \
             -X diff-algorithm=histogram
           
-          echo "Merge finished. Starting Neural Processor..."
+          echo ">>> Merge Phase Complete."
 
-      - name: 🚑 Run Neural Healer
+      # 4. RUN AGENT
+      - name: 🚑 Run Apex Agent
         run: |
-          # Install requests for the script
-          pip3 install requests
-
-          # Identify files that need help
           CONFLICTS=$(git diff --name-only --diff-filter=U)
-          MODIFIED=$(git diff --name-only HEAD)
-          
-          # Run the Python Brain
-          if [ ! -z "$CONFLICTS" ] || [ ! -z "$MODIFIED" ]; then
-             python3 neural_brain.py $CONFLICTS $MODIFIED
+          if [ ! -z "$CONFLICTS" ]; then
+             python3 agent_brain.py $CONFLICTS
           fi
-          
-          # Cleanup the script
-          rm neural_brain.py
+          rm agent_brain.py
 
-      # --- PHASE 4: VERIFICATION & PUSH (From Logger.yml logic) ---
-      - name: 🔍 Verify & Commit
+      # 5. VERIFY & DEPLOY
+      - name: 🔍 Verify Integrity
         run: |
-          echo ">>> Verifying Integrity..."
-          
-          # 1. Check for Markers
+          # A. Conflict Marker Trap
           if grep -r "<<<<<<< HEAD" . --exclude-dir=.github; then
-             echo "❌ FAILURE: Unresolved conflicts remain."
-             grep -r "<<<<<<< HEAD" . --exclude-dir=.github
+             echo "❌ CRITICAL: Unresolved conflicts remain."
+             echo "   The Agent failed to resolve some blocks safely."
              exit 1
           fi
           
-          # 2. Unmerged Check
+          # B. Git Index Check
           if [[ -n $(git diff --name-only --diff-filter=U) ]]; then
-             echo "❌ FAILURE: Git still reports unmerged files."
+             echo "❌ CRITICAL: Git Index is dirty."
              exit 1
           fi
           
-          # 3. Safe Commit (Logger.yml logic)
-          # Remove toolchains from index to prevent submodule errors
+          # C. Safe Commit
           git rm -r --cached toolchains > /dev/null 2>&1 || true
-          
           git add .
           git reset HEAD toolchains > /dev/null 2>&1 || true
           
           if git diff-index --quiet HEAD --; then
              echo "⚠️ No changes to commit."
           else
-             git commit -m "Neural-AI: Merged upstream & resolved conflicts"
+             git commit -m "Agent-AI: Merged upstream with Logic Checks"
              
-             # Push Loop
              TMP="${{ steps.merge_step.outputs.tmp_branch }}"
              TARGET="${{ inputs.target_branch }}"
              
              git repack -a -d
              for i in {1..5}; do
                 if git push origin "$TMP:refs/heads/$TARGET"; then
-                   echo "✅ Pushed to $TARGET"
+                   echo "✅ DEPLOYED TO $TARGET"
                    git push origin --delete "$TMP"
                    exit 0
                 fi
@@ -271,17 +358,18 @@ jobs:
              exit 1
           fi
 
-      - name: 🚨 Report Failure
+      # 6. FAIL SAFE
+      - name: 🚨 Manual Intervention
         if: failure()
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          title: "❌ AI Merge Failed: Manual Intervention Required"
+          title: "❌ Agent Merge Failed: Manual Fix Needed"
           body: |
-            The Neural Merger attempted to resolve conflicts but could not guarantee 100% integrity.
+            The Apex Agent attempted to merge and fix logic, but encountered an error it couldn't auto-correct safely.
             
             **Branch:** `${{ steps.merge_step.outputs.tmp_branch }}`
             
-            Please pull this branch and fix the remaining markers manually.
+            Please verify the conflicts manually.
           branch: ${{ steps.merge_step.outputs.tmp_branch }}
           base: ${{ inputs.target_branch }}
