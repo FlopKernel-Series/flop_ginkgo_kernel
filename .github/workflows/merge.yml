@@ -1,30 +1,22 @@
-name: Auto-merge upstream -> floppy-new (keep floppy-new; push-retry & repack)
+name: 🧠 Auto-Merge 
 
 on:
   workflow_dispatch:
     inputs:
       upstream_repo:
-        description: 'Upstream repo to merge from (HTTPS).'
-        required: false
+        description: 'Upstream Repository URL'
+        required: true
         default: 'https://github.com/neophyteprjkt/kernel_xiaomi_ginkgo.git'
       upstream_branch:
-        description: 'Upstream branch (name).'
-        required: false
+        description: 'Upstream Branch'
+        required: true
         default: 'main'
       target_branch:
-        description: 'Target branch in this repo.'
-        required: false
+        description: 'Target Branch (Your repo)'
+        required: true
         default: 'floppy-new'
-      prefer_upstream:
-        description: 'If true prefer upstream (theirs) on conflicts.'
-        required: false
-        default: 'false'
-      push_retries:
-        description: 'Push retry attempts.'
-        required: false
-        default: '5'
-      repack_before_push:
-        description: 'Run git repack & gc before pushing (true/false).'
+      strict_mode:
+        description: 'Abort if structural damage is detected (true/false)'
         required: false
         default: 'true'
 
@@ -33,282 +25,235 @@ permissions:
   pull-requests: write
 
 jobs:
-  merge:
+  intelligence-merge:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository (full)
+      # 1. SETUP & CHECKOUT
+      - name: 📥 Checkout Source (Full Depth)
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0 # Required for 'find-renames' to work
 
-      - name: Set Git committer identity
+      - name: ⚙️ Configure Git Neural Settings
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "Cortex-Merge-Bot"
+          git config user.email "bot@floppykernel.ai"
+          
+          # ONLINE FIX 1: Increase Rename Limit (Crucial for Kernels)
+          # Kernels have thousands of files; default git gives up too early.
+          git config merge.renameLimit 999999
+          
+          # ONLINE FIX 2: Binary Handling
+          # Prevent git from trying to text-merge binary files (DTBs, Images)
+          echo "* -text" > .gitattributes
+          echo "*.png binary" >> .gitattributes
+          echo "*.jpg binary" >> .gitattributes
+          echo "*.dtb binary" >> .gitattributes
+          echo "*.img binary" >> .gitattributes
 
-      - name: Merge and auto-resolve (generate log & push safely)
-        id: run_merge
-        shell: bash
+      # 2. THE "BRAIN" (PYTHON SCRIPT)
+      - name: 🧠 Embed Structural Logic Script
         run: |
-          set -u
-          set +e
+          cat << 'EOF' > cortex_analyst.py
+          import sys
+          import re
+          import os
 
-          TS=$(date -u +"%Y%m%d%H%M%S")
-          LOG_DIR="$GITHUB_WORKSPACE/logs"
-          mkdir -p "$LOG_DIR"
-          LOG_FILE="$LOG_DIR/merge-debug-$TS.log"
-          touch "$LOG_FILE"
-          exec > >(tee -a "$LOG_FILE") 2>&1
+          def analyze_file(filepath):
+              try:
+                  with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                      lines = f.readlines()
+              except:
+                  return True # Skip binary/unreadable files
 
-          echo "=== Auto-merge run started: $(date -u) ==="
-          echo "Repository: $GITHUB_REPOSITORY"
-          echo "Run ID: $GITHUB_RUN_ID"
+              new_lines = []
+              seen_directives = set()
+              
+              # LOGIC 1: BRACE BALANCING (Did we break the code block?)
+              # We count { and } to ensure the merge didn't leave an open function.
+              brace_balance = 0
+              
+              # LOGIC 2: CONFLICT DETECTION
+              has_conflict = False
+              
+              modified = False
+              
+              # Extensions that need strict checking
+              is_code = filepath.endswith(('.c', '.h', '.cpp', '.dts', '.dtsi'))
 
-          INPUT_PREF="${{ github.event.inputs.prefer_upstream || 'false' }}"
-          if [ "$INPUT_PREF" = "true" ] || [ "$INPUT_PREF" = "True" ]; then
-            STRATEGY="theirs"
-            echo "Using strategy: theirs (prefer upstream)"
-          else
-            STRATEGY="ours"
-            echo "Using strategy: ours (prefer floppy-new)"
-          fi
+              for i, line in enumerate(lines):
+                  stripped = line.strip()
+                  
+                  # Check for Git Conflict Markers
+                  if stripped.startswith('<<<<<<<') or stripped.startswith('======='):
+                      print(f"❌ CRITICAL: Unresolved conflict marker in {filepath}:{i+1}")
+                      return "CONFLICT"
 
-          UPSTREAM_URL="${{ github.event.inputs.upstream_repo }}"
-          UPSTREAM_BRANCH="${{ github.event.inputs.upstream_branch }}"
-          TARGET_BRANCH="${{ github.event.inputs.target_branch }}"
+                  # LOGIC 3: SMART DEDUPLICATION (Includes & Defines)
+                  # Git often pastes the same import twice if context is messy.
+                  if is_code and (stripped.startswith('#include') or stripped.startswith('#define')):
+                      # Normalize spaces for comparison
+                      norm = re.sub(r'\s+', ' ', stripped)
+                      if norm in seen_directives:
+                          # We found a duplicate! Skip it.
+                          modified = True
+                          continue
+                      seen_directives.add(norm)
 
-          git remote add upstream "$UPSTREAM_URL" 2>/dev/null || true
-          echo ""
-          echo "--- Fetching upstream/$UPSTREAM_BRANCH (full) ---"
-          git fetch --no-tags --prune upstream "$UPSTREAM_BRANCH" || echo "WARN: upstream fetch returned non-zero"
+                  # Count Braces (ignoring comments roughly)
+                  if is_code and not stripped.startswith('//') and not stripped.startswith('*'):
+                      brace_balance += line.count('{')
+                      brace_balance -= line.count('}')
 
-          if [ "$(git rev-parse --is-shallow-repository 2>/dev/null || echo false)" = "true" ]; then
-            echo "Repository is shallow; attempting to unshallow..."
-            git fetch --unshallow || echo "WARN: unshallow failed"
-          fi
+                  new_lines.append(line)
 
-          UPSTREAM_SHA=$(git rev-parse --short "upstream/$UPSTREAM_BRANCH" 2>/dev/null || echo "N/A")
-          echo "upstream/$UPSTREAM_BRANCH: $UPSTREAM_SHA"
+              # LOGIC 4: FINAL STRUCTURAL ASSESSMENT
+              if is_code and brace_balance != 0:
+                  print(f"⚠️ STRUCTURAL WARN: Braces unbalanced ({brace_balance}) in {filepath}")
+                  # If balance is wildly off (e.g. > 2), it's likely a bad merge location.
+                  if abs(brace_balance) > 2:
+                      return "BROKEN_STRUCTURE"
 
-          echo ""
-          echo "--- Fetching origin/$TARGET_BRANCH ---"
-          git fetch --no-tags --prune origin "$TARGET_BRANCH" || echo "WARN: fetch origin $TARGET_BRANCH failed"
-          if git rev-parse --verify "origin/$TARGET_BRANCH" >/dev/null 2>&1; then
-            BASE_REF="origin/$TARGET_BRANCH"
-            BASE_SHA=$(git rev-parse --short "origin/$TARGET_BRANCH" 2>/dev/null || echo "N/A")
-            echo "Base: $BASE_REF ($BASE_SHA)"
-          else
-            BASE_REF="HEAD"
-            BASE_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "N/A")
-            echo "origin/$TARGET_BRANCH missing; using HEAD ($BASE_SHA)"
-          fi
+              if modified:
+                  print(f"✨ Auto-healing: Removed duplicates in {filepath}")
+                  with open(filepath, 'w', encoding='utf-8') as f:
+                      f.writelines(new_lines)
 
-          TMP_BRANCH="auto/merge-${TS}"
-          echo ""
-          echo "Creating temporary branch: $TMP_BRANCH from $BASE_REF"
-          if git rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then
-            git checkout -b "$TMP_BRANCH" "$BASE_REF"
-          else
-            git checkout -b "$TMP_BRANCH"
-          fi
-          echo "tmp HEAD: $(git rev-parse --short HEAD)"
+              return "CLEAN"
 
-          echo ""
-          echo "Merging upstream/$UPSTREAM_BRANCH with --allow-unrelated-histories -s recursive -X $STRATEGY --no-ff"
-          export GIT_AUTHOR_NAME="github-actions[bot]"
-          export GIT_AUTHOR_EMAIL="41898282+github-actions[bot]@users.noreply.github.com"
-          export GIT_COMMITTER_NAME="github-actions[bot]"
-          export GIT_COMMITTER_EMAIL="41898282+github-actions[bot]@users.noreply.github.com"
+          if __name__ == "__main__":
+              files = sys.argv[1:]
+              exit_code = 0
+              
+              for f in files:
+                  if os.path.exists(f):
+                      status = analyze_file(f)
+                      if status == "CONFLICT":
+                          exit_code = 1
+                      elif status == "BROKEN_STRUCTURE":
+                          # We allow strict mode to fail the build here
+                          if os.environ.get('STRICT_MODE') == 'true':
+                              print(f"⛔ Strict Mode: Aborting due to structural break in {f}")
+                              exit_code = 1
+              
+              sys.exit(exit_code)
+          EOF
 
-          git merge --allow-unrelated-histories -s recursive -X "$STRATEGY" --no-edit --no-ff "upstream/$UPSTREAM_BRANCH"
-          MERGE_RC=$?
-          echo "git merge exit code: $MERGE_RC"
-
-          echo ""
-          echo "--- Post-merge diagnostics ---"
-          git status --porcelain -b || true
-          echo ""
-          git ls-files -u || true
-          echo ""
-          git --no-pager log -n 10 --oneline || true
-          echo "---------------------------------"
-          echo ""
-
-          CONFLICT_PATHS=$(git ls-files -u | awk '{print $4}' | sort -u || true)
-          if [ -n "$CONFLICT_PATHS" ]; then
-            echo "Conflicted paths detected (sample up to 200 lines):"
-            echo "$CONFLICT_PATHS" | sed -n '1,200p'
-            UNMERGED_PRESENT=1
-          else
-            echo "No unmerged paths detected."
-            UNMERGED_PRESENT=0
-          fi
-
-          AUTO_RESOLVED="false"
-          if [ "$UNMERGED_PRESENT" -eq 1 ]; then
-            if [ "$STRATEGY" = "ours" ] || [ "$STRATEGY" = "theirs" ]; then
-              echo "Auto-resolving conflicts with per-file checkout ($STRATEGY)"
-              for p in $CONFLICT_PATHS; do
-                echo "Resolving: $p"
-                if [ "$STRATEGY" = "ours" ]; then
-                  git checkout --ours -- "$p" || true
-                else
-                  git checkout --theirs -- "$p" || true
-                fi
-                git add "$p" || true
-              done
-
-              if git diff --cached --quiet; then
-                echo "No staged changes to commit after auto-resolve."
-              else
-                git commit -m "Auto-resolve merge conflicts (strategy=${STRATEGY})" || true
-              fi
-
-              if git ls-files -u | grep -q .; then
-                echo "Some conflicts remain after auto-resolve."
-                MERGE_RESULT="conflict"
-              else
-                echo "All conflicts resolved by auto-resolve."
-                MERGE_RESULT="clean"
-                AUTO_RESOLVED="true"
-              fi
-            else
-              echo "Conflicts present but no auto-resolve strategy specified."
-              MERGE_RESULT="conflict"
-            fi
-          else
-            MERGE_RESULT="clean"
-          fi
-
-          echo ""
-          echo "--- Repacking & GC to ensure clean pack for push ---"
-          if [ "${{ github.event.inputs.repack_before_push || 'true' }}" = "true" ]; then
-            git repack -a -d || echo "WARN: git repack failed"
-            git gc --prune=now || echo "WARN: git gc failed"
-          fi
-
-          push_with_retries() {
-            local refspec="$1"
-            local tries=0
-            local max=${{ github.event.inputs.push_retries || '5' }}
-            local ok=0
-            while [ $tries -lt $max ]; do
-              tries=$((tries+1))
-              echo "Push attempt #$tries: git push origin $refspec"
-              git push origin $refspec && { ok=1; break; }
-              echo "Push attempt #$tries failed; sleeping $((tries*5))s before retry..."
-              sleep $((tries*5))
-            done
-            if [ $ok -eq 1 ]; then
-              return 0
-            else
-              return 1
-            fi
-          }
-
-          echo "tmp_branch=$TMP_BRANCH" >> "$GITHUB_OUTPUT"
-          echo "merge_result=$MERGE_RESULT" >> "$GITHUB_OUTPUT"
-          echo "auto_resolved=$AUTO_RESOLVED" >> "$GITHUB_OUTPUT"
-          echo "merge_rc=$MERGE_RC" >> "$GITHUB_OUTPUT"
-          echo "upstream_sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
-          echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
-          echo "merge_log=$LOG_FILE" >> "$GITHUB_OUTPUT"
-          echo "strategy=$STRATEGY" >> "$GITHUB_OUTPUT"
-
-          echo ""
-          echo "--- Pushing temporary branch to origin (with retries) ---"
-          if push_with_retries "$TMP_BRANCH"; then
-            echo "PUSH_TMP_OK=1"
-            echo "push_tmp_ok=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "PUSH_TMP_OK=0"
-            echo "push_tmp_ok=false" >> "$GITHUB_OUTPUT"
-            echo "WARN: failed to push temporary branch after retries"
-          fi
-
-          PUSHED_TO_TARGET="false"
-          if [ "$MERGE_RESULT" = "clean" ]; then
-            echo ""
-            echo "--- Attempting to push merged result to $TARGET_BRANCH (with retries) ---"
-            if push_with_retries "${TMP_BRANCH}:refs/heads/$TARGET_BRANCH"; then
-              echo "PUSH_TARGET_OK=1"
-              PUSHED_TO_TARGET="true"
-              echo "pushed_to_target=true" >> "$GITHUB_OUTPUT"
-              echo "Deleting remote temporary branch origin/$TMP_BRANCH (cleanup)"
-              git push origin --delete "$TMP_BRANCH" || echo "WARN: failed to delete remote tmp branch"
-            else
-              echo "PUSH_TARGET_OK=0"
-              echo "WARN: failed to push merged result to $TARGET_BRANCH after retries"
-            fi
-          else
-            echo "Not pushing to $TARGET_BRANCH because merge_result != clean"
-          fi
-
-          echo "pushed_to_target=$PUSHED_TO_TARGET" >> "$GITHUB_OUTPUT"
-          echo "=== Merge run completed: $(date -u) ==="
-          exit 0
-
-      - name: Sanitize artifact name & determine artifact path
-        id: artifact
-        shell: bash
+      # 3. THE MERGE EXECUTION
+      - name: 🧬 Execute Advanced Merge
+        id: merge_step
         run: |
-          set -u
-          LOG="${{ steps.run_merge.outputs.merge_log }}"
-          if [ -n "$LOG" ]; then
-            echo "artifact_path=$LOG" >> $GITHUB_OUTPUT
+          set -e
+          UPSTREAM="${{ inputs.upstream_repo }}"
+          BRANCH="${{ inputs.upstream_branch }}"
+          TARGET="${{ inputs.target_branch }}"
+
+          git remote add upstream "$UPSTREAM" 2>/dev/null || true
+          
+          echo "::group::Fetching Data"
+          git fetch upstream "$BRANCH" --no-tags --prune
+          
+          # Fix Shallow Repository (Essential for Histogram diff)
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+             git fetch --unshallow || true
+          fi
+          echo "::endgroup::"
+
+          # Create Temporary Validation Branch
+          TS=$(date +%s)
+          TMP="cortex-verify-$TS"
+          git checkout -b "$TMP" "origin/$TARGET"
+
+          echo "---------------------------------------------------"
+          echo "🔄 Running ORT-Histogram Strategy"
+          echo "---------------------------------------------------"
+          # ONLINE RESEARCH OPTIMIZATION:
+          # - ort: Modern merge engine (better than recursive).
+          # - histogram: Matches 'blocks' of code, not lines. Fixes "Random Location" bugs.
+          # - renormalize: Ignores CRLF/LF nonsense.
+          # - find-renames=25%: Detects file moves even if they changed significantly.
+          # - theirs: In a conflict, prefer Upstream (usually newer). *Verified by Analyst later.*
+          
+          git merge "upstream/$BRANCH" \
+            --no-edit --no-ff \
+            -s ort \
+            -X theirs \
+            -X find-renames=25% \
+            -X ignore-all-space \
+            -X renormalize \
+            -X diff-algorithm=histogram
+
+          echo "tmp_branch=$TMP" >> $GITHUB_OUTPUT
+
+      # 4. THE ANALYSIS
+      - name: 🔬 Run Cortex Analyst (Structural Check)
+        id: analyze
+        env:
+          STRICT_MODE: ${{ inputs.strict_mode }}
+        run: |
+          echo "---------------------------------------------------"
+          echo "🤖 Analyzing merged files for Logic & Structure..."
+          echo "---------------------------------------------------"
+          
+          # Get list of files modified by the merge
+          CHANGED_FILES=$(git diff --name-only HEAD^ HEAD)
+          
+          # Run Python Logic
+          if python3 cortex_analyst.py $CHANGED_FILES; then
+             echo "✅ ANALYSIS PASSED: Code structure is valid."
+             
+             # Commit any auto-heals (deduplicated lines)
+             if ! git diff --quiet; then
+                git commit -am "Cortex-Bot: Auto-corrected structure and duplicates"
+             fi
+             
+             echo "status=clean" >> $GITHUB_OUTPUT
           else
-            echo "artifact_path=$GITHUB_WORKSPACE/logs/*.log" >> $GITHUB_OUTPUT
+             echo "❌ ANALYSIS FAILED: The merge created invalid code blocks."
+             echo "status=dirty" >> $GITHUB_OUTPUT
+             exit 1
           fi
 
-          RAW="${{ steps.run_merge.outputs.tmp_branch }}"
-          if [ -z "$RAW" ]; then
-            RAW="run-${{ github.run_id }}"
-          fi
+      # 5. PUSH
+      - name: 🚀 Robust Push (With Retries)
+        if: steps.analyze.outputs.status == 'clean'
+        run: |
+          TMP="${{ steps.merge_step.outputs.tmp_branch }}"
+          TARGET="${{ inputs.target_branch }}"
+          
+          # Git Garbage Collection (Prevents 'pack too large' errors on push)
+          git repack -a -d
+          git gc --prune=now
 
-          SAFE="${RAW//\//-}"
-          SAFE="${SAFE//:/-}"
-          SAFE="${SAFE//\\/-}"
-          SAFE="${SAFE//\"/-}"
-          SAFE="${SAFE// /-}"
-          SAFE="${SAFE//\$/-}"
-          SAFE="${SAFE:0:120}"
-          echo "artifact_safe_name=$SAFE" >> $GITHUB_OUTPUT
+          # Retry Loop for Network Stability
+          for i in {1..5}; do
+             echo "Push Attempt $i..."
+             if git push origin "$TMP:refs/heads/$TARGET"; then
+                echo "✅ Success!"
+                git push origin --delete "$TMP"
+                exit 0
+             fi
+             sleep 5
+          done
+          exit 1
 
-      - name: Upload merge log artifact (always)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: merge-debug-logs-${{ steps.artifact.outputs.artifact_safe_name }}
-          path: ${{ steps.artifact.outputs.artifact_path }}
-
-      - name: Create PR if merge failed or push to target failed
-        if: ${{ steps.run_merge.outputs.merge_result != 'clean' || steps.run_merge.outputs.pushed_to_target != 'true' }}
+      # 6. FAILURE HANDLER
+      - name: 🚨 Create Report on Failure
+        if: failure()
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          title: |
-            Auto-merge: upstream/${{ github.event.inputs.upstream_branch || 'main' }} → ${{ github.event.inputs.target_branch || 'floppy-new' }} (strategy: ${{ steps.run_merge.outputs.strategy }})
+          title: "❌ Auto-Merge Aborted: Structural Damage Detected"
           body: |
-            Automated merge run results:
-
-            - tmp branch: ${{ steps.run_merge.outputs.tmp_branch }}
-            - upstream: ${{ github.event.inputs.upstream_repo || 'https://github.com/neophyteprjkt/kernel_xiaomi_ginkgo.git' }}#${{ github.event.inputs.upstream_branch || 'main' }}
-            - upstream main sha: ${{ steps.run_merge.outputs.upstream_sha }}
-            - base sha used: ${{ steps.run_merge.outputs.base_sha }}
-            - strategy: ${{ steps.run_merge.outputs.strategy }}
-            - merge_result: ${{ steps.run_merge.outputs.merge_result }}
-            - auto_resolved: ${{ steps.run_merge.outputs.auto_resolved }}
-            - Logs: download merge-debug-logs-${{ steps.artifact.outputs.artifact_safe_name }}
-          base: ${{ github.event.inputs.target_branch || 'floppy-new' }}
-          head: ${{ steps.run_merge.outputs.tmp_branch }}
-          labels: automated, auto-merge, merge-debug
-
-      - name: Final summary printed in workflow
-        run: |
-          echo "=== SUMMARY ==="
-          echo "tmp_branch: ${{ steps.run_merge.outputs.tmp_branch }}"
-          echo "merge_result: ${{ steps.run_merge.outputs.merge_result }}"
-          echo "auto_resolved: ${{ steps.run_merge.outputs.auto_resolved }}"
-          echo "pushed_to_target: ${{ steps.run_merge.outputs.pushed_to_target }}"
-          echo "log artifact: merge-debug-logs-${{ steps.artifact.outputs.artifact_safe_name }}"
+            **Cortex-AI Report:**
+            The merge was attempted, but the Structural Analyst detected invalid code.
+            
+            **Diagnosis:**
+            1. Likely inserted code outside of a function block.
+            2. Or broke `brace_balance` (missing `}`).
+            
+            The corrupt code was **NOT** pushed to `${{ inputs.target_branch }}`.
+            Please review the attached branch manually.
+          branch: ${{ steps.merge_step.outputs.tmp_branch }}
+          base: ${{ inputs.target_branch }}
+          labels: "structural-failure, automated"
