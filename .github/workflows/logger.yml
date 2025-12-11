@@ -3,266 +3,419 @@ name: AI Kernel Architect
 on:
   workflow_dispatch:
     inputs:
+      # --- MISSION CONTROL ---
       task_mode:
         description: 'SELECT MISSION MODE'
         required: true
         default: 'execute_merge_and_fix'
         type: choice
         options:
-          # --- GROUP A: SCOUTING (Analysis) ---
-          - analyze_build         # Runs Build -> Dumps Errors & Headers
-          - analyze_merge         # Dry-run Merge -> Dumps Conflicts & Diffs
-          - analyze_cherry_pick   # Dry-run Pick -> Dumps Conflicts & Diffs
-          - analyze_revert        # Dry-run Revert -> Dumps Conflicts & Diffs
-          - analyze_single_file   # Scans specific file -> Dumps Context & Links
-          - analyze_audit         # General scan against upstream -> Dumps Diffs
+          # --- GROUP A: SCOUTING (Safe) ---
+          - analyze_merge         # Dry-run Merge -> Report Conflicts
+          - analyze_build         # Dry-run Build -> Report Errors
+          - analyze_audit         # Scan upstream diffs
           
           # --- GROUP B: EXECUTION (Action) ---
-          - execute_fix_script    # Checkout -> Run 'healer.sh' -> Push
-          - execute_merge_and_fix # Merge -> Run 'healer.sh' -> Push
+          - execute_merge_and_fix # Merge -> AI Fix -> Push
+          - execute_fix_only      # Fix current branch -> Push
 
       target_input_data:
-        description: 'DATA: SHA, Branch, or File Path'
+        description: 'DATA: Branch/SHA (For Analysis)'
         required: false
-        default: ''
-        type: string
+        default: 'main'
 
-      fix_commands:
-        description: '(OPTIONAL) Backup script input (Only used if healer.sh is missing from repo)'
-        required: false
-        default: ''
-        type: string
-
-      # --- CONFIG ---
+      # --- CONFIGURATION ---
+      upstream_url: 
+        description: 'Remote Repo URL' 
+        default: 'https://github.com/neophyteprjkt/kernel_xiaomi_ginkgo.git'
+      upstream_ref: 
+        description: 'Remote Branch' 
+        default: 'main'
+      work_branch: 
+        description: 'Target Branch' 
+        default: 'floppy-new'
+      
       device_name: { default: 'ginkgo', description: 'Device Name' }
-      build_variant: { default: 'Vanilla', description: 'Variant', type: choice, options: [Vanilla, KSUNext, SukiSU] }
-      work_branch: { default: 'floppy-new', description: 'Working Branch' }
-      upstream_url: { default: 'https://github.com/neophyteprjkt/kernel_xiaomi_ginkgo', description: 'Remote Repo' }
-      upstream_ref: { default: 'main', description: 'Remote Branch Name' }
+      build_variant: { default: 'Vanilla', type: choice, options: [Vanilla, KSUNext, SukiSU] }
+
+      # --- INTELLIGENCE ---
+      ai_provider:
+        description: 'AI Provider'
+        default: 'gemini'
+        type: choice
+        options: [gemini, openai, offline]
+      
+      ai_api_key:
+        description: 'AI API Key'
+        required: false
+      
+      ai_model:
+        description: 'Model Name (e.g. gemini-1.5-flash)'
+        default: 'gemini-1.5-flash'
+        type: string
 
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
-  ai_omni_core:
+  ai_architect:
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      TASK: ${{ github.event.inputs.task_mode }}
-      INPUT_DATA: ${{ github.event.inputs.target_input_data }}
-      FIX_SCRIPT: ${{ github.event.inputs.fix_commands }}
-      DEVICE: ${{ github.event.inputs.device_name }}
-      VARIANT: ${{ github.event.inputs.build_variant }}
-      REMOTE_URL: ${{ github.event.inputs.upstream_url }}
-      REMOTE_REF: ${{ github.event.inputs.upstream_ref }}
-      BRANCH: ${{ github.event.inputs.work_branch }}
+      TASK: ${{ inputs.task_mode }}
+      INPUT_DATA: ${{ inputs.target_input_data }}
+      BRANCH: ${{ inputs.work_branch }}
+      REMOTE_URL: ${{ inputs.upstream_url }}
+      REMOTE_REF: ${{ inputs.upstream_ref }}
+      DEVICE: ${{ inputs.device_name }}
+      VARIANT: ${{ inputs.build_variant }}
+      AI_PROVIDER: ${{ inputs.ai_provider }}
+      AI_KEY: ${{ inputs.ai_api_key }}
+      AI_MODEL: ${{ inputs.ai_model }}
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       USE_CCACHE: 1
-      FIX_FAILED: "false"
 
     steps:
-      - name: Disk Cleanup
-        run: sudo rm -rf /usr/share/dotnet /opt/ghc "$AGENT_TOOLSDIRECTORY"
+      # 1. SETUP & HARDENING
+      - name: 🛡️ Harden Environment
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends git python3-pip python3-requests libncurses-dev bc bison flex libssl-dev ccache ninja-build device-tree-compiler
+          pip3 install requests gitpython
 
-      - name: Checkout Source
+      - name: 📥 Checkout Source
         uses: actions/checkout@v4
         with:
-          ref: "${{ github.event.inputs.work_branch }}"
+          ref: ${{ inputs.work_branch }}
           fetch-depth: 0
 
-      # --- SETUP ---
-      - name: Cache Pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: "pip-${{ runner.os }}"
-
-      - name: Cache Toolchain
+      # 2. RESTORE CACHING & TOOLCHAINS (From Original Logger)
+      - name: 💾 Cache Toolchain
         uses: actions/cache@v4
         with:
           path: toolchains
           key: "clang-zyc-new-${{ runner.os }}"
 
-      - name: Cache Ccache
+      - name: 💾 Cache Ccache
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
           key: kernel-ccache-${{ env.DEVICE }}
           restore-keys: kernel-ccache-
 
-      - name: Environment Setup
+      - name: ⚙️ Configure Toolchain
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends git curl bc bison flex ccache \
-            python3-pip ninja-build libssl-dev libelf-dev device-tree-compiler \
-            libncurses-dev build-essential wget
-          
-          if [ ! -f /usr/lib/x86_64-linux-gnu/libtinfo.so.5 ]; then
-             sudo ln -s /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
-          fi
-          
-          pip install gitpython --break-system-packages || pip install gitpython
-
-          # Toolchain Setup (Using git clone for robustness)
           mkdir -p toolchains/bin
           if [ ! -d "toolchains/clang" ]; then
              git clone --depth=1 https://github.com/ZyCromerZ/Clang toolchains/clang
           fi
           echo "$(pwd)/toolchains/clang/bin" >> $GITHUB_PATH
-
           export CCACHE_EXEC=/usr/bin/ccache
-          ccache -M 10G
-          git config --global user.name "Floppy-Bot"
-          git config --global user.email "bot@floppy.ai"
-          # Stop toolchain warning
+          ccache -M 5G
+
+      - name: ⚙️ Configure Git Neural Net
+        run: |
+          git config --global user.name "Apex-Architect"
+          git config --global user.email "architect@floppykernel.ai"
+          git config merge.renameLimit 999999
           git config --global advice.addEmbeddedRepo false
+          
+          # BINARY PROTECTION
+          echo "* -text" > .gitattributes
+          echo "*.png binary" >> .gitattributes
+          echo "*.dtb binary" >> .gitattributes
+          echo "*.gz binary" >> .gitattributes
+          echo "*.ko binary" >> .gitattributes
+          
+          git remote add upstream "$REMOTE_URL" || true
+          git fetch upstream
 
-      # =========================================================
-      # ⚠️ EXECUTION PHASE: MERGE & HEAL
-      # =========================================================
+      # 3. INJECT APEX BRAIN (The "Neural Core")
+      - name: 🧠 Inject Apex Brain
+        run: |
+          cat << 'EOF' > apex_brain.py
+          import sys, os, re, requests, subprocess, time
 
-      - name: ⚙️ EXECUTE Merge & Fix
-        if: ${{ contains(env.TASK, 'execute') }}
+          # --- CONFIG ---
+          PROVIDER = os.environ.get("AI_PROVIDER", "gemini")
+          API_KEY = os.environ.get("AI_KEY", "").strip()
+          REQUESTED_MODEL = os.environ.get("AI_MODEL", "gemini-1.5-flash")
+          MAX_RETRIES = 3
+
+          def clean_ai_output(text):
+              text = re.sub(r'^```[a-z]*\n', '', text, flags=re.MULTILINE)
+              text = re.sub(r'\n```$', '', text, flags=re.MULTILINE)
+              return text.strip()
+
+          def count_balance(text):
+              clean = re.sub(r'//.*', '', text)
+              clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
+              return clean.count('{') - clean.count('}')
+
+          def execute_api_call(model, prompt):
+              """Universal API Caller"""
+              if PROVIDER == "gemini":
+                  url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={API_KEY}"
+                  data = {"contents": [{"parts": [{"text": prompt}]}]}
+                  try:
+                      resp = requests.post(url, json=data, timeout=60)
+                      if resp.status_code == 200:
+                          return clean_ai_output(resp.json()['candidates'][0]['content']['parts'][0]['text'])
+                      elif resp.status_code == 404: return "MODEL_NOT_FOUND"
+                      else: print(f"⚠️ Gemini Error: {resp.text[:100]}"); return None
+                  except Exception as e: print(f"⚠️ Net Error: {e}"); return None
+              
+              elif PROVIDER == "openai":
+                  url = "https://api.openai.com/v1/chat/completions"
+                  headers = {"Authorization": f"Bearer {API_KEY}"}
+                  data = {"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.2}
+                  try:
+                      resp = requests.post(url, json=data, headers=headers, timeout=60)
+                      if resp.status_code == 200:
+                          return clean_ai_output(resp.json()['choices'][0]['message']['content'])
+                  except: pass
+              return None
+
+          def ask_ai_with_fallback(prompt):
+              """Smart Router: Custom -> Fallback"""
+              # 1. User Model
+              res = execute_api_call(REQUESTED_MODEL, prompt)
+              if res and res != "MODEL_NOT_FOUND": return res
+              # 2. Fallbacks
+              if PROVIDER == "gemini":
+                  print(f"⚠️ Model '{REQUESTED_MODEL}' unavailable. Trying Fallback...")
+                  res = execute_api_call("gemini-1.5-flash", prompt)
+                  if res and res != "MODEL_NOT_FOUND": return res
+              return None
+
+          def solve_conflict_block(local, remote, pre, post, filename):
+              current_error = ""
+              for attempt in range(1, MAX_RETRIES + 1):
+                  print(f"🧠 Thinking (Attempt {attempt})...")
+                  
+                  prompt = f"""
+                  ROLE: Expert Linux Kernel 4.14 Developer.
+                  TASK: Merge Git Conflict in '{filename}'.
+                  
+                  GUIDELINES:
+                  1. Return ONLY valid C code. NO Markdown.
+                  2. Use TABS for indentation.
+                  3. Keep Driver Logic (Local) AND Core Updates (Remote).
+                  4. STRICTLY balance braces {{ }}.
+                  5. Be aware of surrounding context (provided below).
+                  
+                  CONTEXT BEFORE:
+                  {pre}
+                  
+                  <<<<<<< LOCAL
+                  {local}
+                  =======
+                  {remote}
+                  >>>>>>> REMOTE
+                  
+                  CONTEXT AFTER:
+                  {post}
+                  
+                  {f"PREVIOUS ERROR: {current_error}" if current_error else ""}
+                  """
+                  
+                  solution = ask_ai_with_fallback(prompt)
+                  if not solution: continue
+
+                  # Validation
+                  if "<<<<" in solution:
+                      current_error = "Conflict markers present."
+                      continue
+                  # Loose Balance Check (allow if context implies split function)
+                  if count_balance(solution) != 0 and count_balance(local) == 0:
+                      current_error = "Unbalanced braces detected."
+                      continue
+                  
+                  return solution
+              return None
+
+          def process_file(filepath):
+              try:
+                  with open(filepath, 'r', encoding='utf-8', errors='ignore') as f: lines = f.readlines()
+              except: return
+
+              new_lines = []
+              i = 0
+              modified = False
+              
+              while i < len(lines):
+                  line = lines[i]
+                  if line.startswith('<<<<<<<'):
+                      start = i
+                      # Grab 50 lines context
+                      pre = "".join(lines[max(0, start-50):start])
+                      
+                      local_blk, remote_blk = [], []
+                      mode = "local"
+                      i += 1
+                      while i < len(lines):
+                          if lines[i].startswith('======='): mode = "remote"
+                          elif lines[i].startswith('>>>>>>>'): break
+                          else:
+                              if mode == "local": local_blk.append(lines[i])
+                              else: remote_blk.append(lines[i])
+                          i += 1
+                      
+                      # Grab 50 lines post
+                      post = "".join(lines[i+1:min(len(lines), i+50)])
+                      
+                      print(f"🔎 Analyzing {filepath}...")
+                      merged = solve_conflict_block("".join(local_blk), "".join(remote_blk), pre, post, filepath)
+                      
+                      if merged:
+                          new_lines.append(merged + "\n")
+                          modified = True
+                      else:
+                          new_lines.extend(lines[start:i+1]) # Keep markers if failed
+                          print("⚠️ Agent failed to resolve block.")
+                  else:
+                      new_lines.append(line)
+                  i += 1
+
+              if modified:
+                  with open(filepath, 'w', encoding='utf-8') as f: f.writelines(new_lines)
+                  print(f"✅ Fixed: {filepath}")
+                  # FORCE ADD (Fixes dirty index)
+                  subprocess.run(["git", "add", filepath], check=True)
+
+          if __name__ == "__main__":
+              files = sys.argv[1:]
+              if not files: print("No conflicts."); sys.exit(0)
+              for f in files:
+                  if os.path.exists(f): process_file(f)
+          EOF
+
+      # 4. MISSION ROUTER
+      - name: 🚀 EXECUTE MISSION
         shell: bash
         run: |
           touch operation.log
-          echo "=== 🚀 MISSION START: $TASK ===" | tee -a operation.log
           
-          git remote add upstream "$REMOTE_URL" || true
-          git fetch upstream 2>&1 | tee -a operation.log
-          
-          # 1. MERGE (If requested)
+          # --- A. SCOUT: ANALYZE MERGE ---
+          if [[ "$TASK" == "analyze_merge" ]]; then
+             echo ">>> Dry-Run Merge..." | tee -a operation.log
+             git merge --no-commit --no-ff "upstream/$REMOTE_REF" || true
+             git diff --name-only --diff-filter=U > conflicts.txt
+             echo "Conflicts Found:" | tee -a operation.log
+             cat conflicts.txt | tee -a operation.log
+             exit 0
+          fi
+
+          # --- B. SCOUT: ANALYZE BUILD ---
+          if [[ "$TASK" == "analyze_build" ]]; then
+             echo ">>> Running Build Test..." | tee -a operation.log
+             # Assumes do_build.sh exists in repo, otherwise skips
+             if [ -f "do_build.sh" ]; then
+                bash ./do_build.sh $DEVICE $VARIANT > build.log 2>&1 || true
+                grep -E "error:|warning:" build.log > build_errors.txt
+             else
+                echo "❌ do_build.sh not found." | tee -a operation.log
+             fi
+             exit 0
+          fi
+
+          # --- C. ACTION: MERGE & FIX ---
           if [[ "$TASK" == "execute_merge_and_fix" ]]; then
-             TARGET=${INPUT_DATA:-$REMOTE_REF}
-             echo ">>> Merging upstream/$TARGET..." | tee -a operation.log
-             git merge --no-commit --no-ff "upstream/$TARGET" 2>&1 | tee -a operation.log || echo "⚠️ Conflicts detected (Expected)." | tee -a operation.log
+             echo ">>> Starting Smart Merge..." | tee -a operation.log
+             
+             set +e
+             git merge "upstream/$REMOTE_REF" \
+               --no-commit --no-ff \
+               -s ort \
+               -X find-renames=50% \
+               -X ignore-all-space \
+               -X diff-algorithm=histogram
+             
+             CONFLICTS=$(git diff --name-only --diff-filter=U)
+             
+             if [ ! -z "$CONFLICTS" ]; then
+                 echo ">>> Engaging Apex Agent..." | tee -a operation.log
+                 python3 apex_brain.py $CONFLICTS
+             else
+                 echo ">>> Clean merge! No AI needed." | tee -a operation.log
+             fi
           fi
 
-          # 2. LOCATE SCRIPT
-          if [ -f "healer.sh" ]; then
-             echo "✅ FOUND LOCAL SCRIPT: ./healer.sh" | tee -a operation.log
-             chmod +x healer.sh
-          elif [ -f ".github/workflows/healer.sh" ]; then
-             echo "✅ FOUND WORKFLOW SCRIPT: .github/workflows/healer.sh" | tee -a operation.log
-             cp .github/workflows/healer.sh .
-             chmod +x healer.sh
-          elif [ ! -z "$FIX_SCRIPT" ]; then
-             echo "⚠️ Using Input Box Script..." | tee -a operation.log
-             python3 -c "import os; s = os.environ.get('FIX_SCRIPT', ''); s = s.replace('\`\`\`bash', '').replace('\`\`\`', ''); open('healer.sh', 'w').write(s)"
-             sed -i 's/\r$//' healer.sh
-             chmod +x healer.sh
-          else
-             echo "❌ CRITICAL: No script found!" | tee -a operation.log
-             echo "FIX_FAILED=true" >> $GITHUB_ENV
-             exit 0
+          # --- D. ACTION: FIX ONLY ---
+          if [[ "$TASK" == "execute_fix_only" ]]; then
+             CONFLICTS=$(git diff --name-only --diff-filter=U)
+             python3 apex_brain.py $CONFLICTS
           fi
 
-          # 3. RUN HEALER
-          echo ">>> Executing Healer..." | tee -a operation.log
-          bash -x ./healer.sh 2>&1 | tee -a operation.log || echo "⚠️ Script warnings detected..." | tee -a operation.log
-          
-          # 4. VERIFICATION
-          echo ">>> Verifying..." | tee -a operation.log
-          
-          # A. Check for Unmerged files
+      # 5. VERIFY & DEPLOY
+      - name: 🔍 Verify & Commit
+        if: ${{ contains(env.TASK, 'execute') }}
+        run: |
+          # 1. Index Check
           if [[ -n $(git diff --name-only --diff-filter=U) ]]; then
-             echo "❌ CRITICAL: Unmerged files remain!" | tee -a operation.log
-             git diff --name-only --diff-filter=U >> operation.log
+             echo "❌ CRITICAL: Unmerged files remain."
              echo "FIX_FAILED=true" >> $GITHUB_ENV
-             exit 0
+             exit 1
           fi
           
-          # B. Marker Check (EXCLUDING LOGS, SCRIPTS, YML)
-          if grep -r "<<<<<<< HEAD" . --exclude-dir=.github --exclude=ai_brain.py --exclude=healer.sh --exclude=*.yml --exclude=operation.log; then
-             echo "❌ CRITICAL: Text conflict markers found in SOURCE CODE!" | tee -a operation.log
-             grep -rIl "<<<<<<< HEAD" . --exclude-dir=.github --exclude=ai_brain.py --exclude=healer.sh --exclude=operation.log >> operation.log
+          # 2. Marker Check
+          if grep -r "<<<<<<< HEAD" . --exclude-dir=.github; then
+             echo "❌ CRITICAL: Conflict markers found."
              echo "FIX_FAILED=true" >> $GITHUB_ENV
-             exit 0
-          else
-             echo "✅ Verification Passed." | tee -a operation.log
+             exit 1
           fi
-          
-          # 5. COMMIT (WITH SAFETY FILTER)
-          if [ ! -z "$FIX_SCRIPT" ] && [ ! -f ".github/workflows/healer.sh" ] && [ ! -f "healer.sh" ]; then
-             rm -f healer.sh
-          fi
-          
-          # CRITICAL FIX FOR ERROR 128:
-          # Remove toolchains from git index explicitly before adding "."
-          echo "🛡️  Preventing toolchain submodule error..."
+
+          # 3. SUBMODULE SAFETY
+          echo "🛡️ Unstaging toolchains..."
           git rm -r --cached toolchains > /dev/null 2>&1 || true
-          
           git add .
-          
-          # Double Check: Unstage toolchains if 'git add .' grabbed them
           git reset HEAD toolchains > /dev/null 2>&1 || true
           
           if git diff-index --quiet HEAD --; then
-             echo "⚠️ No changes to commit." | tee -a operation.log
+             echo "⚠️ No changes to commit."
           else
-             git commit -m "AI Fix: Resolved Conflicts & Merged $TARGET" 
-             git push origin $BRANCH 2>&1 | tee -a operation.log
-          fi
-
-      # =========================================================
-      # ⚠️ SCOUTING PHASE (Analysis)
-      # =========================================================
-
-      - name: 🔬 SCOUT Operations
-        if: ${{ contains(env.TASK, 'analyze') }}
-        run: |
-          git remote add upstream "$REMOTE_URL" || true
-          git fetch upstream
-          
-          DATA="${INPUT_DATA:-$REMOTE_REF}"
-          echo "Target: $DATA"
-          
-          if [[ "$TASK" == "analyze_build" ]]; then
-             bash ./do_build.sh $DEVICE $VARIANT > full.log 2>&1 || true
-             grep -E "error:|warning:" full.log > build_errors.txt
-          
-          elif [[ "$TASK" == "analyze_merge" ]]; then
-             git merge --no-commit --no-ff "upstream/$DATA" || true
-             git diff --name-only --diff-filter=U > conflicts.txt
+             git commit -m "AI Architect: Mission Complete ($TASK)"
              
-          elif [[ "$TASK" == "analyze_audit" ]]; then
-             git diff --name-only "upstream/$DATA...HEAD" > diff_list.txt
+             git repack -a -d
+             for i in {1..5}; do
+                if git push origin "HEAD:refs/heads/$BRANCH"; then
+                   echo "✅ DEPLOYED SUCCESSFULLY"
+                   exit 0
+                fi
+                sleep 5
+             done
+             echo "❌ Push Failed after retries"
+             exit 1
           fi
 
-      # =========================================================
-      # ⚠️ REPORTING
-      # =========================================================
-      - name: 📝 GENERATE REPORT
+      # 6. REPORTING & FAILURE HANDLING
+      - name: 📝 Mission Report
         if: always()
-        shell: python
         run: |
-          import os, re
-          FAILED = os.environ.get("FIX_FAILED", "false")
-          TASK = os.environ.get("TASK", "N/A")
-          
-          briefing = f"# 🤖 MISSION REPORT: {TASK}\n"
-          if FAILED == "true":
-              briefing = "# ❌ MISSION FAILED\nConflicts could not be resolved automatically.\n"
-              briefing += "Check `operation.log` for details.\n"
-          
-          if os.path.exists("conflicts.txt"):
-              files = open("conflicts.txt").read().splitlines()
-              briefing += f"\n**Conflicts Detected:** {len(files)}\n"
-              for f in files: briefing += f"- {f}\n"
-              
-          with open("Mission_Briefing.txt", "w") as f: f.write(briefing)
+          echo "Mission: $TASK" > Mission_Report.txt
+          if [ -f "conflicts.txt" ]; then cat conflicts.txt >> Mission_Report.txt; fi
+          if [ -f "build_errors.txt" ]; then cat build_errors.txt >> Mission_Report.txt; fi
+          if [ -f "operation.log" ]; then cat operation.log >> Mission_Report.txt; fi
 
-      - name: 📤 UPLOAD ARTIFACTS
+      - name: 📤 Upload Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Mission_Logs
-          path: |
-            Mission_Briefing.txt
-            operation.log
-            healer.sh
+          path: Mission_Report.txt
 
-      - name: 🛑 FAIL ON ERROR
-        if: ${{ env.FIX_FAILED == 'true' }}
-        run: exit 1
+      - name: 🚨 Failure PR
+        if: failure() || env.FIX_FAILED == 'true'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          title: "❌ AI Architect Mission Failed"
+          body: |
+            The Architect failed to complete mission `$TASK`.
+            
+            **Artifacts:** Check `Mission_Logs` for details.
+            **Action:** Manual intervention required.
+          branch: "ai-failure-${{ github.run_id }}"
+          base: ${{ inputs.work_branch }}
