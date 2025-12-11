@@ -1,4 +1,4 @@
-name: FloppyKernel – Build matrix & Release 
+name: FloppyKernel – Build matrix & Release
 
 on:
   workflow_dispatch:
@@ -33,16 +33,13 @@ env:
   SUBARCH: arm64
   CLANG_TYPE: custom
   USE_CCACHE: 1
-  CCACHE_SIZE: "2G"
+  CCACHE_SIZE: "4G"         # Increased to 4G (since we free up disk space)
   CCACHE_COMPRESS: "1"
 
-  # --- [WORKFLOW OPTIMIZATION HACKS] ---
-  # 1. Force LLVM everywhere 
+  # --- [WORKFLOW OPTIMIZATION] ---
   LLVM: "1"
   LLVM_IAS: "1"
-  # 2. Module Stripping (The "dstrip" equivalent). Reduces RAM usage & Boot time.
   INSTALL_MOD_STRIP: "1"
-  # 3. Disable Asserts (Remove runtime safety checks for speed)
   KCPPFLAGS: "-DNDEBUG"
 
 jobs:
@@ -56,63 +53,88 @@ jobs:
         variant: [Vanilla, KSUNext, SukiSU]
 
     steps:
-      # 1. Get Source Code (Fastest Method)
-      - name: Checkout Kernel Source
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 1
-
-      # 2. Install Tools (Only what is missing)
-      - name: Install Dependencies
+      # 1. CLEANUP (FIXES OUT OF STORAGE)
+      - name: 🗑️ Free Disk Space (Aggressive)
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends \
-            bc bison flex build-essential ninja-build lz4 zstd \
-            libssl-dev libelf-dev device-tree-compiler \
-            ccache binutils file optipng jpegoptim \
-            python3 python3-pip
+          echo "::group::Cleaning Environment"
+          # Standard GitHub runners have ~14GB free. This script frees ~30GB more.
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          echo "Disk space after cleanup:"
+          df -h
+          echo "::endgroup::"
 
-      # --- HACK: PREVENT CLANG CRASH (139) ---
-      - name: Hack - Setup Swap & Resource Limits
+      # 2. SWAP (FIXES OUT OF RAM)
+      - name: 🧠 Setup Swap (12GB)
         run: |
-          echo "::group::Setting up 12GB Swap"
+          echo "::group::Allocating Swap"
+          # We do this AFTER cleanup so we actually have space for the swap file
           sudo fallocate -l 12G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
           sudo swapon --show
           echo "::endgroup::"
-      # --- END HACK ---
 
-      # 3. Handle LLVM Updates (Robust Check)
-      - name: Check Upstream LLVM Version
+      # 3. CHECKOUT
+      - name: 📥 Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      # 4. DEPENDENCIES
+      - name: 📦 Install Dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex build-essential ninja-build lz4 zstd \
+            libssl-dev libelf-dev device-tree-compiler \
+            ccache binutils file optipng jpegoptim \
+            python3 python3-pip zip unzip
+
+      # 5. LLVM CHECK
+      - name: 🔎 Check Upstream LLVM Version
         id: check-llvm
         run: |
-          LATEST_URL=$(curl -fsSL "${{ env.LLVM_WEEKLY_LATEST }}" 2>/dev/null | tr -d '[:space:]')
+          # Added retry logic for robustness
+          for i in {1..3}; do
+            LATEST_URL=$(curl -fsSL "${{ env.LLVM_WEEKLY_LATEST }}" 2>/dev/null | tr -d '[:space:]')
+            [ ! -z "$LATEST_URL" ] && break
+            echo "Attempt $i failed, retrying..."
+            sleep 2
+          done
+          
           if [ -z "$LATEST_URL" ]; then
-            echo "::error::Failed to fetch LLVM URL."
+            echo "::error::Failed to fetch LLVM URL after 3 attempts."
             exit 1
           fi
+          
           echo "LLVM_URL=$LATEST_URL" >> $GITHUB_ENV
           URL_HASH=$(echo -n "$LATEST_URL" | sha256sum | head -c 16)
           echo "cache_key=$URL_HASH" >> $GITHUB_OUTPUT
 
-      # 4. Cache Toolchain
-      - name: Cache LLVM Toolchain
+      # 6. CACHE TOOLCHAIN
+      - name: 💾 Cache LLVM Toolchain
         id: cache-llvm
         uses: actions/cache@v4
         with:
           path: ${{ env.TOOLCHAIN_DIR }}
           key: llvm-${{ steps.check-llvm.outputs.cache_key }}
 
-      # 5. Download LLVM (If Cache Miss)
-      - name: Download & Install LLVM
+      # 7. INSTALL LLVM
+      - name: ⚙️ Download & Install LLVM
         if: steps.cache-llvm.outputs.cache-hit != 'true'
         run: |
           mkdir -p "${{ env.TOOLCHAIN_DIR }}"
           cd "${{ env.TOOLCHAIN_DIR }}"
-          wget -qO clang.tar.zst "${{ env.LLVM_URL }}"
+          
+          # Retry logic for large downloads
+          wget --tries=3 --timeout=30 -qO clang.tar.zst "${{ env.LLVM_URL }}"
+          
           if [ -f clang.tar.zst ]; then
             zstd -d -c clang.tar.zst | tar -xf -
             rm -f clang.tar.zst
@@ -126,8 +148,8 @@ jobs:
           export PATH="${{ env.TOOLCHAIN_DIR }}/bin:$PATH"
           clang --version
 
-      # 6. Cache CCache (Speeds up recompilation)
-      - name: Cache CCache
+      # 8. CCACHE SETUP
+      - name: ⚡ Setup CCache
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
@@ -136,94 +158,82 @@ jobs:
             ccache-${{ matrix.device }}-${{ matrix.variant }}-
             ccache-
 
-      - name: Setup CCache
+      - name: Configure CCache
         run: |
           mkdir -p ${{ env.CCACHE_DIR }}
           ccache -M ${{ env.CCACHE_SIZE }}
           ccache -z
 
-      # 7. Environment Setup
-      - name: Prepare Environment
-        run: |
-          # Ensure LLD is used if available
-          if command -v ld.lld >/dev/null 2>&1; then
-             echo "LD=ld.lld" >> $GITHUB_ENV
-          else
-             sudo apt-get install -y lld
-             echo "LD=ld.lld" >> $GITHUB_ENV
-          fi
-          # Maximize CPU usage
-          echo "MAKEFLAGS=-j$(nproc --all)" >> $GITHUB_ENV
-          echo "JOBS=$(nproc --all)" >> $GITHUB_ENV
-
-      # 8. Build Script Execution
-      - name: Run Build Script
+      # 9. BUILD
+      - name: 🚀 Run Build Script
         id: build_kernel
         shell: bash -l {0}
         run: |
-          # --- HACK: UNLIMIT STACK ---
-          # Prevents compiler crash on deep recursion (common with LTO)
+          # --- SAFETY CHECKS ---
           ulimit -s unlimited
-          # ---------------------------
+          
+          # Force LLD (Much lower RAM usage than standard linker)
+          if command -v ld.lld >/dev/null 2>&1; then
+             echo "Using LLD Linker"
+             export LD=ld.lld
+          else
+             sudo apt-get install -y lld
+             export LD=ld.lld
+          fi
 
+          # Config
           case "${{ matrix.variant }}" in
             Vanilla) FLAG="" ;;
             KSUNext) FLAG="k" ;;
             SukiSU)  FLAG="s" ;;
           esac
           
-          echo "::group::Build Config"
+          echo "::group::Build Details"
           echo "Device: ${{ matrix.device }}"
           echo "Variant: ${{ matrix.variant }}"
+          echo "Cores: $(nproc --all)"
           echo "::endgroup::"
 
+          # Add Toolchain to path
           export PATH="${{ env.TOOLCHAIN_DIR }}/bin:/usr/lib/ccache:$PATH"
           
           chmod +x do_build.sh ckbuild.sh
           
+          # Run build with pipefail to catch errors in the pipe
           set -o pipefail
           ./do_build.sh "${{ matrix.device }}" "$FLAG" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
 
-      # 9. Post-Build: Stats & Logs
-      - name: Check CCache Stats
+      # 10. POST-BUILD
+      - name: 📊 Check CCache Stats
         if: always()
         run: ccache -s
 
-      - name: Filter Logs (Errors/Warnings)
+      - name: 🔍 Filter Logs
         if: failure() || success()
         run: |
           LOG="$GITHUB_WORKSPACE/build.log"
           if [ -f "$LOG" ]; then
-            grep -nEi '(error|warning):' "$LOG" > "$GITHUB_WORKSPACE/full_issues.log" || true
-            grep -i "error:" "$GITHUB_WORKSPACE/full_issues.log" > "$GITHUB_WORKSPACE/errors.log" || true
-            grep -i "warning:" "$GITHUB_WORKSPACE/full_issues.log" > "$GITHUB_WORKSPACE/warnings.log" || true
+            # Grab last 200 lines of error context
+            grep -C 5 -i "error:" "$LOG" > "$GITHUB_WORKSPACE/errors.log" || true
           fi
 
-      # 10. Gather Artifacts
-      - name: Stage Zips
+      - name: 📦 Stage Zips
         id: stage_zips
         if: success()
         run: |
           mkdir -p release_artifacts
+          # Find zips larger than 10M to avoid empty junk files
           find "$GITHUB_WORKSPACE" -maxdepth 4 -name "*.zip" -size +10M -exec cp -v {} release_artifacts/ \;
-          if [ -z "$(ls -A release_artifacts)" ]; then
+          
+          count=$(ls release_artifacts | wc -l)
+          if [ "$count" -gt 0 ]; then
+             echo "zip_found=true" >> $GITHUB_OUTPUT
+          else
              echo "::warning::No kernel ZIPs found!"
              echo "zip_found=false" >> $GITHUB_OUTPUT
-          else
-             echo "zip_found=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Upload Logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: logs-${{ matrix.device }}-${{ matrix.variant }}
-          path: |
-            build.log
-            errors.log
-            warnings.log
-
-      - name: Upload Kernel ZIPs
+      - name: 📤 Upload Kernel ZIPs
         if: steps.stage_zips.outputs.zip_found == 'true'
         uses: actions/upload-artifact@v4
         with:
@@ -240,12 +250,10 @@ jobs:
        startsWith(github.ref, 'refs/tags/'))
     
     steps:
-      # --- FIX: CHECKOUT REPO (REQUIRED FOR RELEASE) ---
       - name: Checkout Repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      # -------------------------------------------------
 
       - name: Download Artifacts
         uses: actions/download-artifact@v4
@@ -261,11 +269,9 @@ jobs:
           
           cd artifacts
           for file in *.zip; do
-             mv "$file" "../final_assets/${DATE}-R${{ github.run_number }}-${file}"
+             # Renaming for clarity
+             mv "$file" "../final_assets/${DATE}-CI-${file}"
           done
-          
-          echo "Assets prepared:"
-          ls -lh ../final_assets/
 
       - name: Publish Release
         env:
@@ -274,8 +280,14 @@ jobs:
           TAG="FloppyKernel-${{ github.run_number }}-$(date -u +%Y%m%d)"
           TITLE="Floppy Kernel CI • Build ${{ github.run_number }}"
           
+          # Only create release if assets exist
+          if [ -z "$(ls -A final_assets)" ]; then
+             echo "No assets to release."
+             exit 0
+          fi
+          
           gh release create "$TAG" \
             --title "$TITLE" \
-            --notes "Automated CI Build | Toolchain: LLVM (Latest Weekly) | Devices: Ginkgo/Laurel" \
+            --notes "Automated CI Build | Toolchain: LLVM (Latest Weekly)" \
             --target "${{ github.sha }}" \
             final_assets/*.zip
