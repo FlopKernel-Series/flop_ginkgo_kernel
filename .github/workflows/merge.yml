@@ -1,10 +1,10 @@
-name: 🧠 Auto-Merge 
+name: 🧠 merge branch
 
 on:
   workflow_dispatch:
     inputs:
       upstream_repo:
-        description: 'Upstream Repository URL'
+        description: 'Upstream URL'
         required: true
         default: 'https://github.com/neophyteprjkt/kernel_xiaomi_ginkgo.git'
       upstream_branch:
@@ -15,245 +15,273 @@ on:
         description: 'Target Branch (Your repo)'
         required: true
         default: 'floppy-new'
-      strict_mode:
-        description: 'Abort if structural damage is detected (true/false)'
+      ai_api_key:
+        description: 'AI API Key (OpenAI/Gemini/DeepSeek). Leave empty for Offline Mode.'
         required: false
-        default: 'true'
+      ai_base_url:
+        description: 'AI Base URL (Default: OpenAI)'
+        required: false
+        default: 'https://api.openai.com/v1'
+      ai_model:
+        description: 'Model Name'
+        required: false
+        default: 'gpt-4o'
 
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
-  intelligence-merge:
+  neural_merge:
     runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      AI_KEY: ${{ inputs.ai_api_key }}
+      AI_URL: ${{ inputs.ai_base_url }}
+      AI_MODEL: ${{ inputs.ai_model }}
+      
     steps:
-      # 1. SETUP & CHECKOUT
-      - name: 📥 Checkout Source (Full Depth)
+      # --- PHASE 1: PREPARATION (From Logger.yml) ---
+      - name: 🧹 Disk Cleanup & Setup
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends git python3-pip python3-requests libncurses-dev
+
+      - name: 📥 Checkout Source
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Required for 'find-renames' to work
+          fetch-depth: 0
 
-      - name: ⚙️ Configure Git Neural Settings
+      - name: ⚙️ Configure Git & Environment
         run: |
-          git config user.name "Cortex-Merge-Bot"
-          git config user.email "bot@floppykernel.ai"
-          
-          # ONLINE FIX 1: Increase Rename Limit (Crucial for Kernels)
-          # Kernels have thousands of files; default git gives up too early.
+          git config --global user.name "Neural-Bot"
+          git config --global user.email "bot@floppykernel.ai"
           git config merge.renameLimit 999999
           
-          # ONLINE FIX 2: Binary Handling
-          # Prevent git from trying to text-merge binary files (DTBs, Images)
+          # SAFETY: Prevent binary corruption
           echo "* -text" > .gitattributes
           echo "*.png binary" >> .gitattributes
-          echo "*.jpg binary" >> .gitattributes
           echo "*.dtb binary" >> .gitattributes
-          echo "*.img binary" >> .gitattributes
+          echo "*.gz binary" >> .gitattributes
 
-      # 2. THE "BRAIN" (PYTHON SCRIPT)
-      - name: 🧠 Embed Structural Logic Script
+      # --- PHASE 2: THE BRAIN (Python + AI Integration) ---
+      - name: 🧠 Inject Neural Engine
         run: |
-          cat << 'EOF' > cortex_analyst.py
-          import sys
-          import re
-          import os
+          cat << 'EOF' > neural_brain.py
+          import sys, os, re, time
+          import requests
 
-          def analyze_file(filepath):
+          # --- CONFIG ---
+          API_KEY = os.environ.get("AI_KEY", "").strip()
+          BASE_URL = os.environ.get("AI_URL", "https://api.openai.com/v1")
+          MODEL = os.environ.get("AI_MODEL", "gpt-4o")
+
+          CONFLICT_PATTERN = re.compile(r'<<<<<<< HEAD\n(.*?)\n=======\n(.*?)\n>>>>>>> [a-f0-9]+', re.DOTALL)
+
+          def ask_ai_to_resolve(local_code, remote_code, filename):
+              if not API_KEY: return None
+              
+              prompt = f"""
+              You are a Linux Kernel Maintainer. Resolve a git conflict in file: {filename}.
+              
+              LOCAL CODE (Ours):
+              {local_code}
+              
+              REMOTE CODE (Theirs/Upstream):
+              {remote_code}
+              
+              INSTRUCTIONS:
+              1. Return ONLY the resolved code. No markdown, no explanations.
+              2. Keep necessary logic from both if they don't conflict functionally.
+              3. Prefer Upstream for logic updates, but keep Local specific drivers/features.
+              4. Ensure C syntax is valid (brackets balanced).
+              """
+              
+              headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
+              data = {
+                  "model": MODEL,
+                  "messages": [{"role": "user", "content": prompt}],
+                  "temperature": 0.2
+              }
+              
+              try:
+                  print(f"🤖 Consulting AI for {filename}...")
+                  resp = requests.post(f"{BASE_URL}/chat/completions", json=data, headers=headers, timeout=20)
+                  if resp.status_code == 200:
+                      return resp.json()['choices'][0]['message']['content'].strip().replace("```c", "").replace("```", "")
+                  else:
+                      print(f"⚠️ AI Error: {resp.text}")
+              except Exception as e:
+                  print(f"⚠️ AI Network Error: {e}")
+              return None
+
+          def heuristic_resolve(match, filepath):
+              local = match.group(1)
+              remote = match.group(2)
+              
+              # 1. Whitespace/Noise Check
+              if local.strip() == remote.strip(): return local
+              
+              # 2. Brace Safety Check
+              bal_local = local.count('{') - local.count('}')
+              bal_remote = remote.count('{') - remote.count('}')
+              
+              # If Upstream is clean and we are broken, take Upstream
+              if bal_remote == 0 and bal_local != 0: return remote
+              
+              # 3. AI Escalation
+              if API_KEY:
+                  ai_fix = ask_ai_to_resolve(local, remote, filepath)
+                  if ai_fix: return ai_fix
+              
+              # 4. Fallback: If we can't solve it, keep the conflict markers 
+              # so the verifier catches it. Do not guess blindly.
+              return match.group(0) 
+
+          def process_file(filepath):
               try:
                   with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                      lines = f.readlines()
-              except:
-                  return True # Skip binary/unreadable files
+                      content = f.read()
+              except: return # Skip binary
 
+              original = content
+              
+              # A. Resolve Conflicts
+              if '<<<<<<< HEAD' in content:
+                  content = CONFLICT_PATTERN.sub(lambda m: heuristic_resolve(m, filepath), content)
+
+              # B. Deduplicate & Clean
+              lines = content.splitlines()
               new_lines = []
-              seen_directives = set()
+              seen = set()
+              is_code = filepath.endswith(('.c', '.h', '.cpp', '.dtsi'))
               
-              # LOGIC 1: BRACE BALANCING (Did we break the code block?)
-              # We count { and } to ensure the merge didn't leave an open function.
-              brace_balance = 0
-              
-              # LOGIC 2: CONFLICT DETECTION
-              has_conflict = False
-              
-              modified = False
-              
-              # Extensions that need strict checking
-              is_code = filepath.endswith(('.c', '.h', '.cpp', '.dts', '.dtsi'))
-
-              for i, line in enumerate(lines):
+              for line in lines:
                   stripped = line.strip()
-                  
-                  # Check for Git Conflict Markers
-                  if stripped.startswith('<<<<<<<') or stripped.startswith('======='):
-                      print(f"❌ CRITICAL: Unresolved conflict marker in {filepath}:{i+1}")
-                      return "CONFLICT"
-
-                  # LOGIC 3: SMART DEDUPLICATION (Includes & Defines)
-                  # Git often pastes the same import twice if context is messy.
+                  # Remove duplicates
                   if is_code and (stripped.startswith('#include') or stripped.startswith('#define')):
-                      # Normalize spaces for comparison
                       norm = re.sub(r'\s+', ' ', stripped)
-                      if norm in seen_directives:
-                          # We found a duplicate! Skip it.
-                          modified = True
-                          continue
-                      seen_directives.add(norm)
-
-                  # Count Braces (ignoring comments roughly)
-                  if is_code and not stripped.startswith('//') and not stripped.startswith('*'):
-                      brace_balance += line.count('{')
-                      brace_balance -= line.count('}')
-
+                      if norm in seen: continue
+                      seen.add(norm)
                   new_lines.append(line)
 
-              # LOGIC 4: FINAL STRUCTURAL ASSESSMENT
-              if is_code and brace_balance != 0:
-                  print(f"⚠️ STRUCTURAL WARN: Braces unbalanced ({brace_balance}) in {filepath}")
-                  # If balance is wildly off (e.g. > 2), it's likely a bad merge location.
-                  if abs(brace_balance) > 2:
-                      return "BROKEN_STRUCTURE"
-
-              if modified:
-                  print(f"✨ Auto-healing: Removed duplicates in {filepath}")
+              final_content = '\n'.join(new_lines) + '\n'
+              
+              if final_content != original:
                   with open(filepath, 'w', encoding='utf-8') as f:
-                      f.writelines(new_lines)
-
-              return "CLEAN"
+                      f.write(final_content)
+                  print(f"✅ Processed: {filepath}")
 
           if __name__ == "__main__":
               files = sys.argv[1:]
-              exit_code = 0
-              
               for f in files:
-                  if os.path.exists(f):
-                      status = analyze_file(f)
-                      if status == "CONFLICT":
-                          exit_code = 1
-                      elif status == "BROKEN_STRUCTURE":
-                          # We allow strict mode to fail the build here
-                          if os.environ.get('STRICT_MODE') == 'true':
-                              print(f"⛔ Strict Mode: Aborting due to structural break in {f}")
-                              exit_code = 1
-              
-              sys.exit(exit_code)
+                  if os.path.exists(f): process_file(f)
           EOF
 
-      # 3. THE MERGE EXECUTION
-      - name: 🧬 Execute Advanced Merge
+      # --- PHASE 3: EXECUTION ---
+      - name: 🧬 Merge with ORT Strategy
         id: merge_step
         run: |
-          set -e
-          UPSTREAM="${{ inputs.upstream_repo }}"
-          BRANCH="${{ inputs.upstream_branch }}"
-          TARGET="${{ inputs.target_branch }}"
-
-          git remote add upstream "$UPSTREAM" 2>/dev/null || true
-          
-          echo "::group::Fetching Data"
-          git fetch upstream "$BRANCH" --no-tags --prune
-          
-          # Fix Shallow Repository (Essential for Histogram diff)
+          # 1. Fetch
+          git remote add upstream "${{ inputs.upstream_repo }}" 2>/dev/null || true
+          git fetch upstream "${{ inputs.upstream_branch }}" --no-tags --prune
           if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
              git fetch --unshallow || true
           fi
-          echo "::endgroup::"
 
-          # Create Temporary Validation Branch
+          # 2. Create Branch
           TS=$(date +%s)
-          TMP="cortex-verify-$TS"
-          git checkout -b "$TMP" "origin/$TARGET"
-
-          echo "---------------------------------------------------"
-          echo "🔄 Running ORT-Histogram Strategy"
-          echo "---------------------------------------------------"
-          # ONLINE RESEARCH OPTIMIZATION:
-          # - ort: Modern merge engine (better than recursive).
-          # - histogram: Matches 'blocks' of code, not lines. Fixes "Random Location" bugs.
-          # - renormalize: Ignores CRLF/LF nonsense.
-          # - find-renames=25%: Detects file moves even if they changed significantly.
-          # - theirs: In a conflict, prefer Upstream (usually newer). *Verified by Analyst later.*
-          
-          git merge "upstream/$BRANCH" \
-            --no-edit --no-ff \
-            -s ort \
-            -X theirs \
-            -X find-renames=25% \
-            -X ignore-all-space \
-            -X renormalize \
-            -X diff-algorithm=histogram
-
+          TMP="ai-merge-$TS"
+          git checkout -b "$TMP" "origin/${{ inputs.target_branch }}"
           echo "tmp_branch=$TMP" >> $GITHUB_OUTPUT
 
-      # 4. THE ANALYSIS
-      - name: 🔬 Run Cortex Analyst (Structural Check)
-        id: analyze
-        env:
-          STRICT_MODE: ${{ inputs.strict_mode }}
+          # 3. Merge (Allow Failure)
+          echo ">>> Merging..."
+          set +e
+          git merge "upstream/${{ inputs.upstream_branch }}" \
+            --no-commit --no-ff \
+            -s ort \
+            -X find-renames=50% \
+            -X ignore-all-space \
+            -X diff-algorithm=histogram
+          
+          echo "Merge finished. Starting Neural Processor..."
+
+      - name: 🚑 Run Neural Healer
         run: |
-          echo "---------------------------------------------------"
-          echo "🤖 Analyzing merged files for Logic & Structure..."
-          echo "---------------------------------------------------"
+          # Install requests for the script
+          pip3 install requests
+
+          # Identify files that need help
+          CONFLICTS=$(git diff --name-only --diff-filter=U)
+          MODIFIED=$(git diff --name-only HEAD)
           
-          # Get list of files modified by the merge
-          CHANGED_FILES=$(git diff --name-only HEAD^ HEAD)
+          # Run the Python Brain
+          if [ ! -z "$CONFLICTS" ] || [ ! -z "$MODIFIED" ]; then
+             python3 neural_brain.py $CONFLICTS $MODIFIED
+          fi
           
-          # Run Python Logic
-          if python3 cortex_analyst.py $CHANGED_FILES; then
-             echo "✅ ANALYSIS PASSED: Code structure is valid."
-             
-             # Commit any auto-heals (deduplicated lines)
-             if ! git diff --quiet; then
-                git commit -am "Cortex-Bot: Auto-corrected structure and duplicates"
-             fi
-             
-             echo "status=clean" >> $GITHUB_OUTPUT
+          # Cleanup the script
+          rm neural_brain.py
+
+      # --- PHASE 4: VERIFICATION & PUSH (From Logger.yml logic) ---
+      - name: 🔍 Verify & Commit
+        run: |
+          echo ">>> Verifying Integrity..."
+          
+          # 1. Check for Markers
+          if grep -r "<<<<<<< HEAD" . --exclude-dir=.github; then
+             echo "❌ FAILURE: Unresolved conflicts remain."
+             grep -r "<<<<<<< HEAD" . --exclude-dir=.github
+             exit 1
+          fi
+          
+          # 2. Unmerged Check
+          if [[ -n $(git diff --name-only --diff-filter=U) ]]; then
+             echo "❌ FAILURE: Git still reports unmerged files."
+             exit 1
+          fi
+          
+          # 3. Safe Commit (Logger.yml logic)
+          # Remove toolchains from index to prevent submodule errors
+          git rm -r --cached toolchains > /dev/null 2>&1 || true
+          
+          git add .
+          git reset HEAD toolchains > /dev/null 2>&1 || true
+          
+          if git diff-index --quiet HEAD --; then
+             echo "⚠️ No changes to commit."
           else
-             echo "❌ ANALYSIS FAILED: The merge created invalid code blocks."
-             echo "status=dirty" >> $GITHUB_OUTPUT
+             git commit -m "Neural-AI: Merged upstream & resolved conflicts"
+             
+             # Push Loop
+             TMP="${{ steps.merge_step.outputs.tmp_branch }}"
+             TARGET="${{ inputs.target_branch }}"
+             
+             git repack -a -d
+             for i in {1..5}; do
+                if git push origin "$TMP:refs/heads/$TARGET"; then
+                   echo "✅ Pushed to $TARGET"
+                   git push origin --delete "$TMP"
+                   exit 0
+                fi
+                sleep 5
+             done
              exit 1
           fi
 
-      # 5. PUSH
-      - name: 🚀 Robust Push (With Retries)
-        if: steps.analyze.outputs.status == 'clean'
-        run: |
-          TMP="${{ steps.merge_step.outputs.tmp_branch }}"
-          TARGET="${{ inputs.target_branch }}"
-          
-          # Git Garbage Collection (Prevents 'pack too large' errors on push)
-          git repack -a -d
-          git gc --prune=now
-
-          # Retry Loop for Network Stability
-          for i in {1..5}; do
-             echo "Push Attempt $i..."
-             if git push origin "$TMP:refs/heads/$TARGET"; then
-                echo "✅ Success!"
-                git push origin --delete "$TMP"
-                exit 0
-             fi
-             sleep 5
-          done
-          exit 1
-
-      # 6. FAILURE HANDLER
-      - name: 🚨 Create Report on Failure
+      - name: 🚨 Report Failure
         if: failure()
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          title: "❌ Auto-Merge Aborted: Structural Damage Detected"
+          title: "❌ AI Merge Failed: Manual Intervention Required"
           body: |
-            **Cortex-AI Report:**
-            The merge was attempted, but the Structural Analyst detected invalid code.
+            The Neural Merger attempted to resolve conflicts but could not guarantee 100% integrity.
             
-            **Diagnosis:**
-            1. Likely inserted code outside of a function block.
-            2. Or broke `brace_balance` (missing `}`).
+            **Branch:** `${{ steps.merge_step.outputs.tmp_branch }}`
             
-            The corrupt code was **NOT** pushed to `${{ inputs.target_branch }}`.
-            Please review the attached branch manually.
+            Please pull this branch and fix the remaining markers manually.
           branch: ${{ steps.merge_step.outputs.tmp_branch }}
           base: ${{ inputs.target_branch }}
-          labels: "structural-failure, automated"
