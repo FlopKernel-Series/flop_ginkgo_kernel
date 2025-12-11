@@ -4999,11 +4999,11 @@ void skb_scrub_packet(struct sk_buff *skb, bool xnet)
 #ifdef CONFIG_NET_SWITCHDEV
 	skb->offload_fwd_mark = 0;
 #endif
+	ipvs_reset(skb);
 
 	if (!xnet)
 		return;
 
-	ipvs_reset(skb);
 	skb_orphan(skb);
 	skb->mark = 0;
 }

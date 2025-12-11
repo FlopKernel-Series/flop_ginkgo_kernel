@@ -1,2 +1,6 @@
-*.c   diff=cpp
-*.h   diff=cpp
+* -text
+*.png binary
+*.dtb binary
+*.gz binary
+*.ko binary
+*.o binary

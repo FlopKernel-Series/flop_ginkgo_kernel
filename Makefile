@@ -2,7 +2,7 @@
 VERSION = 4
 PATCHLEVEL = 14
 SUBLEVEL = 356
-EXTRAVERSION = -openela-rc1
+EXTRAVERSION = +12
 NAME = Petit Gorille
 
 # *DOCUMENTATION*
@@ -1056,7 +1056,6 @@ KBUILD_CFLAGS += -fno-builtin-wcslen
 
 # Prevents Clang from replacing optimized kernel string functions 
 KBUILD_CFLAGS += -fno-builtin-bcmp
-
 # change __FILE__ to the relative path from the srctree
 KBUILD_CFLAGS	+= $(call cc-option,-fmacro-prefix-map=$(srctree)/=)
 
