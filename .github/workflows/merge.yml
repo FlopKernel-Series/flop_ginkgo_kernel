@@ -1,4 +1,4 @@
-name: 🧠 Apex Agentic Merger (Unlimited Model Support)
+name: 🧠 Auto merge branch
 
 on:
   workflow_dispatch:
