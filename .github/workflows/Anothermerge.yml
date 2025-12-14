@@ -1,10 +1,10 @@
-name: 🧠 Auto merge v2
+name: auto merge v2
 
 on:
   workflow_dispatch:
     inputs:
       upstream_repo:
-        description: 'Upstream URL'
+        description: 'Upstream Repository URL'
         required: true
         default: 'https://github.com/neophyteprjkt/kernel_xiaomi_ginkgo.git'
       upstream_branch:
@@ -16,44 +16,37 @@ on:
         required: true
         default: 'floppy-new'
       
-      # --- AI CONFIGURATION ---
-      ai_provider:
-        description: 'AI Provider'
-        required: true
-        default: 'gemini'
-        type: choice
-        options:
-          - gemini
-          - openai
-      
+      # --- APEX CORE CONFIGURATION ---
       ai_api_key:
-        description: 'AI API Key'
+        description: 'Gemini API Key (Required)'
         required: true
       
       ai_model:
-        description: 'Primary Model'
+        description: 'Primary Logic Core'
         required: true
-        default: 'gemini-1.5-pro'
-        type: string
+        default: 'models/gemini-2.5-flash'
+        type: choice
+        options:
+          - models/gemini-2.5-flash
+          - models/gemini-2.5-pro
+          - models/gemini-2.0-flash-thinking-exp-01-21
+          - models/gemini-2.0-pro-exp-02-05
 
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
-  neural_merge:
+  apex_engine:
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      AI_PROVIDER: ${{ inputs.ai_provider }}
       AI_KEY: ${{ inputs.ai_api_key }}
       AI_MODEL: ${{ inputs.ai_model }}
 
     steps:
-      # ========================================================
-      # LAYER 1: HARDENED INFRASTRUCTURE
-      # ========================================================
-      - name: 🛡️ Harden Environment
+      # 1. INITIALIZATION & HARDENING
+      - name: 🛡️ Initialize Environment
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
           sudo apt-get update -qq
@@ -65,153 +58,164 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: ⚙️ Configure Git Neural Net
+      - name: ⚙️ Configure Git Systems
         run: |
-          git config --global user.name "Apex-Omni"
+          git config --global user.name "Apex-Bot"
           git config --global user.email "bot@floppykernel.ai"
           git config merge.renameLimit 999999
           
-          # --- LAYER 2: BINARY PROTECTION ---
-          # Protects compiled objects from being text-merged
+          # --- BINARY ASSET PROTECTION ---
+          # Strictly forbids Git from attempting text merges on binary files
           echo "* -text" > .gitattributes
           echo "*.png binary" >> .gitattributes
           echo "*.dtb binary" >> .gitattributes
           echo "*.gz binary" >> .gitattributes
           echo "*.ko binary" >> .gitattributes
           echo "*.o binary" >> .gitattributes
+          echo "*.bpf binary" >> .gitattributes
+          echo "*.zip binary" >> .gitattributes
 
-      # ========================================================
-      # LAYER 3: THE OMNI-BRAIN INJECTION
-      # ========================================================
-      - name: 🧠 Inject Omni-Brain (Heuristics + AI)
+      # 2. INJECT APEX LOGIC CORE (PYTHON)
+      - name: 🧠 Inject Apex Logic Core
         run: |
-          cat << 'EOF' > omni_brain.py
-          import sys, os, re, requests, subprocess, time
+          cat << 'EOF' > apex_core.py
+          import sys, os, re, requests, time
 
-          # --- MATRIX CONFIGURATION ---
-          PROVIDER = os.environ.get("AI_PROVIDER", "gemini")
+          # --- CONFIGURATION ---
           API_KEY = os.environ.get("AI_KEY", "").strip()
-          PRIMARY_MODEL = os.environ.get("AI_MODEL", "gemini-1.5-flash")
+          PRIMARY_MODEL = os.environ.get("AI_MODEL", "models/gemini-2.5-flash")
+          
+          # The "Thinking" model is used if the Primary fails validation
+          FALLBACK_MODEL = "models/gemini-2.0-flash-thinking-exp-01-21"
+          
+          COOLDOWN = 2  # Seconds between calls to prevent 429
           MAX_RETRIES = 3
 
-          # --- UTILITIES ---
-          def clean_ai_output(text):
+          def clean_response(text):
+              """Sanitizes AI output to strictly code."""
               # Remove Markdown blocks
               text = re.sub(r'^```[a-z]*\n', '', text, flags=re.MULTILINE)
               text = re.sub(r'\n```$', '', text, flags=re.MULTILINE)
-              # Remove conflict markers if AI accidentally left them
+              # Remove accidental markers
               text = re.sub(r'<<<<<<< .*', '', text)
               text = re.sub(r'=======', '', text)
               text = re.sub(r'>>>>>>> .*', '', text)
               return text.strip()
 
-          def count_balance(text):
-              """Checks for balanced braces {} to prevent syntax errors"""
+          def validate_syntax(text, filename):
+              """
+              Professional Syntax Validator.
+              Adapts logic based on file extension.
+              """
+              # 1. Strip comments for accurate counting
               clean = re.sub(r'//.*', '', text)
               clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
-              return clean.count('{') - clean.count('}')
+              
+              # 2. DTS/DTSI Files (Device Tree)
+              if filename.endswith('.dts') or filename.endswith('.dtsi'):
+                  # Device trees use nodes { }; but also properties < >;
+                  # We check brace balance strictly.
+                  return clean.count('{') == clean.count('}')
+              
+              # 3. C/C++/Java/Makefiles
+              # Check Braces {} and Parentheses ()
+              braces = clean.count('{') == clean.count('}')
+              parens = clean.count('(') == clean.count(')')
+              return braces and parens
 
-          # --- LAYER 4: API COMMUNICATION ---
-          def execute_api_call(model, prompt):
-              if PROVIDER == "gemini":
-                  url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={API_KEY}"
-                  data = {
-                      "contents": [{"parts": [{"text": prompt}]}],
-                      "generationConfig": {"temperature": 0.2} # Low temp for precision
+          def execute_gemini_request(model, prompt):
+              """Executes API call with exponential backoff for Rate Limits."""
+              url = f"https://generativelanguage.googleapis.com/v1beta/{model}:generateContent?key={API_KEY}"
+              headers = {'Content-Type': 'application/json'}
+              data = {
+                  "contents": [{"parts": [{"text": prompt}]}],
+                  "generationConfig": {
+                      "temperature": 0.1, 
+                      "maxOutputTokens": 8192
                   }
-                  try:
-                      resp = requests.post(url, json=data, timeout=60)
-                      if resp.status_code == 200:
-                          return clean_ai_output(resp.json()['candidates'][0]['content']['parts'][0]['text'])
-                      elif resp.status_code == 404: return "MODEL_NOT_FOUND"
-                      else: 
-                          print(f"   ⚠️ Gemini Error: {resp.status_code}")
-                          return None
-                  except Exception as e: print(f"   ⚠️ Network: {e}"); return None
+              }
 
-              elif PROVIDER == "openai":
-                  url = "https://api.openai.com/v1/chat/completions"
-                  headers = {"Authorization": f"Bearer {API_KEY}"}
-                  data = {"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.2}
+              for attempt in range(1, MAX_RETRIES + 1):
                   try:
-                      resp = requests.post(url, json=data, headers=headers, timeout=60)
-                      if resp.status_code == 200:
-                          return clean_ai_output(resp.json()['choices'][0]['message']['content'])
-                  except: pass
+                      time.sleep(COOLDOWN * attempt) # Anti-429 Backoff
+                      response = requests.post(url, headers=headers, json=data, timeout=60)
+                      
+                      if response.status_code == 200:
+                          try:
+                              return clean_response(response.json()['candidates'][0]['content']['parts'][0]['text'])
+                          except KeyError:
+                              return None
+                      elif response.status_code == 429:
+                          print(f"      [APEX] Rate Limit (429). Pausing {attempt * 5}s...")
+                          time.sleep(attempt * 5)
+                      else:
+                          print(f"      [APEX] API Error {response.status_code}: {response.text[:100]}")
+                          return None
+                  except Exception as e:
+                      print(f"      [APEX] Network Exception: {e}")
               return None
 
-          # --- LAYER 5: ALGORITHMIC HEURISTICS (The Logic Filter) ---
-          def try_heuristic_merge(local, remote):
-              """
-              Tries to solve conflicts WITHOUT AI for common patterns.
-              Returns Merged String or None.
-              """
+          def solve_heuristic(local, remote):
+              """Layer 1: Deterministic Algorithmic Solver."""
               l_lines = [x.strip() for x in local.splitlines() if x.strip()]
               r_lines = [x.strip() for x in remote.splitlines() if x.strip()]
-              
-              # 5a. Import/Include Union
-              # If both are just lists of #include or import, merge them uniquely
-              if all(x.startswith('#include') or x.startswith('import') for x in l_lines + r_lines):
-                  print("   ⚡ Heuristic: Merging Includes...")
-                  unique = sorted(list(set(l_lines + r_lines)))
-                  return "\n".join(unique)
-              
-              # 5b. Simple Makefile/Kconfig Additions
-              # If both blocks look like config definitions, try to keep both
-              if all('=' in x or 'config ' in x for x in l_lines + r_lines):
-                  # Very basic check: if no identical keys, append
-                  print("   ⚡ Heuristic: Merging Configs...")
-                  return local + "\n" + remote
 
+              # 1. Header/Import Union
+              if all(x.startswith('#include') or x.startswith('import') for x in l_lines + r_lines):
+                  print("      [LOGIC] Optimizing Headers (Union Strategy)")
+                  return "\n".join(sorted(list(set(l_lines + r_lines))))
+
+              # 2. Makefile/Kconfig Additions
+              if all(('obj-' in x or 'CONFIG_' in x) for x in l_lines + r_lines):
+                  print("      [LOGIC] Optimizing Configs (Append Strategy)")
+                  return local + "\n" + remote
+              
               return None
 
-          # --- LAYER 6: THE AI SOLVER ---
-          def solve_conflict_ai(local, remote, pre, post, filename):
-              current_error = ""
-              
-              # Model Fallback Chain
-              models_to_try = [PRIMARY_MODEL, "gemini-1.5-flash", "gemini-1.5-pro"]
-              if PROVIDER == "openai": models_to_try = [PRIMARY_MODEL, "gpt-4o", "gpt-3.5-turbo"]
+          def resolve_conflict(local, remote, pre, post, filename):
+              # A. Attempt Heuristic Resolution
+              heuristic = solve_heuristic(local, remote)
+              if heuristic: return heuristic
 
-              for model in models_to_try:
-                  for attempt in range(1, 3): # 2 attempts per model
-                      print(f"   🧠 Neural Net: {model} (Attempt {attempt})...")
-                      
-                      prompt = f"""
-                      ROLE: Senior Linux Kernel Architect.
-                      TASK: Resolve Git Conflict in '{filename}'.
-                      
-                      STRATEGY:
-                      1. Analyze 'LOCAL' (Our Driver Logic) and 'REMOTE' (Upstream Updates).
-                      2. If LOCAL has custom driver features, PRESERVE THEM.
-                      3. If REMOTE has core kernel fixes, INTEGRATE THEM.
-                      4. Output valid C/Makefile code only. No Markdown.
-                      
-                      CONTEXT BEFORE:
-                      {pre}
-                      
-                      <<<<<<< LOCAL
-                      {local}
-                      =======
-                      {remote}
-                      >>>>>>> REMOTE
-                      
-                      CONTEXT AFTER:
-                      {post}
-                      
-                      ERROR_HISTORY: {current_error}
-                      """
-                      
-                      solution = execute_api_call(model, prompt)
-                      
-                      if not solution or solution == "MODEL_NOT_FOUND": continue
-                      
-                      # Validation: Check Braces
-                      if count_balance(solution) != 0 and count_balance(local) == 0:
-                          current_error = "Previous solution had unbalanced braces. Fix it."
-                          continue
-                          
-                      return solution
+              # B. Construct Professional Prompt
+              prompt = f"""
+              SYSTEM_ROLE: Expert Linux Kernel Architect.
+              TASK: Resolve Git Merge Conflict in '{filename}'.
+              
+              STRICT_GUIDELINES:
+              1. OUTPUT: Return ONLY the valid C/Code block. No Markdown. No comments.
+              2. STRATEGY: PRESERVE 'LOCAL' (Downstream/Driver) logic. INTEGRATE 'REMOTE' (Upstream) fixes only if safe.
+              3. SYNTAX: Ensure perfectly balanced braces {{}} and parentheses ().
+              4. CONTEXT: Analyze the surrounding code provided below.
+              
+              --- CONTEXT BEFORE ---
+              {pre}
+              
+              --- CONFLICT: LOCAL (KEEP THIS LOGIC) ---
+              {local}
+              
+              --- CONFLICT: REMOTE (INCOMING CHANGES) ---
+              {remote}
+              
+              --- CONTEXT AFTER ---
+              {post}
+              """
+
+              # C. Attempt 1: Primary Model (Gemini 2.5 Flash)
+              print(f"      [AI] Requesting Resolution via {PRIMARY_MODEL}...")
+              solution = execute_gemini_request(PRIMARY_MODEL, prompt)
+              
+              if solution and validate_syntax(solution, filename):
+                  return solution
+              else:
+                  print("      [AI] Primary model failed validation. Engaging Reasoning Engine...")
+
+              # D. Attempt 2: Thinking Model (Gemini 2.0 Flash Thinking)
+              # Used for complex logic where 2.5 Flash might have missed a brace
+              solution = execute_gemini_request(FALLBACK_MODEL, prompt)
+              if solution and validate_syntax(solution, filename):
+                  print("      [AI] Reasoning Engine resolved the conflict.")
+                  return solution
               
               return None
 
@@ -227,13 +231,12 @@ jobs:
               while i < len(lines):
                   line = lines[i]
                   if line.startswith('<<<<<<<'):
-                      start_marker = i
+                      start = i
                       
-                      # Context Grabbing (Expanded to 60 lines)
-                      pre = "".join(lines[max(0, start_marker-60):start_marker])
+                      # Expanded Context Window (100 lines) for structural awareness
+                      pre_ctx = "".join(lines[max(0, start-100):start])
                       
-                      local_blk = []
-                      remote_blk = []
+                      local_blk, remote_blk = [], []
                       mode = "local"
                       i += 1
                       while i < len(lines):
@@ -244,31 +247,25 @@ jobs:
                               else: remote_blk.append(lines[i])
                           i += 1
                       
-                      post = "".join(lines[i+1:min(len(lines), i+60)])
+                      post_ctx = "".join(lines[i+1:min(len(lines), i+100)])
                       
                       local_str = "".join(local_blk)
                       remote_str = "".join(remote_blk)
 
-                      print(f"🔎 Conflict: {filepath}")
+                      print(f"🔎 Processing Conflict: {filepath} (Line {start})")
                       
-                      # STEP 1: Try Heuristic (Fast & Local)
-                      merged = try_heuristic_merge(local_str, remote_str)
+                      # EXECUTE RESOLUTION
+                      resolved = resolve_conflict(local_str, remote_str, pre_ctx, post_ctx, filepath)
                       
-                      # STEP 2: Try AI (Smart & Remote)
-                      if not merged:
-                          merged = solve_conflict_ai(local_str, remote_str, pre, post, filepath)
-                      
-                      # STEP 3: Nuclear Fallback (Survival Mode)
-                      if merged:
-                          new_lines.append(merged + "\n")
+                      if resolved:
+                          new_lines.append(resolved + "\n")
+                          print("      ✅ Conflict Resolved.")
                           modified = True
-                          print("   ✅ Resolved.")
                       else:
-                          print("   ☢️ UNRESOLVABLE: Enforcing LOCAL (Ours).")
-                          # FORCE OURS: We discard remote changes for this block
-                          new_lines.append(local_str) 
+                          # NUCLEAR FALLBACK: Force Local
+                          print("      ☢️ RESOLUTION FAILED. Enforcing LOCAL (Downstream) Preservation.")
+                          new_lines.append(local_str)
                           modified = True
-
                   else:
                       new_lines.append(line)
                   i += 1
@@ -284,66 +281,59 @@ jobs:
                   if os.path.exists(f): process_file(f)
           EOF
 
-      # ========================================================
-      # LAYER 7: EXECUTION STRATEGY
-      # ========================================================
-      - name: 🧬 Merge (Histogram Strategy)
-        id: merge_step
+      # 3. MERGE EXECUTION
+      - name: 🧬 Execute Strategic Merge
+        id: merge
         run: |
           git remote add upstream "${{ inputs.upstream_repo }}" 2>/dev/null || true
           git fetch upstream "${{ inputs.upstream_branch }}" --no-tags
           
           TS=$(date +%s)
-          TMP="omni-merge-$TS"
-          git checkout -b "$TMP" "origin/${{ inputs.target_branch }}"
-          echo "tmp_branch=$TMP" >> $GITHUB_OUTPUT
+          TMP_BRANCH="apex-merge-$TS"
+          git checkout -b "$TMP_BRANCH" "origin/${{ inputs.target_branch }}"
+          echo "branch=$TMP_BRANCH" >> $GITHUB_OUTPUT
 
-          echo ">>> Executing Advanced Histogram Merge..."
-          # Strategy: ORT + Histogram + Find Renames (50%) + Ignore Whitespace
-          set +e
+          echo ">>> STARTING MERGE OPERATION"
+          # Allow merge to fail (exit code 1) so we can handle conflicts
           git merge "upstream/${{ inputs.upstream_branch }}" \
             --no-commit --no-ff \
             -s ort \
             -X find-renames=50% \
             -X ignore-all-space \
-            -X diff-algorithm=histogram
-          
-          exit 0 # Continue even if merge returns 1 (conflict)
+            -X diff-algorithm=histogram || true
 
-      - name: 🚑 Engage Omni-Brain
+      # 4. ENGAGE APEX CORE
+      - name: 🚑 Engage Apex Logic Core
         run: |
           CONFLICTS=$(git diff --name-only --diff-filter=U)
           if [ ! -z "$CONFLICTS" ]; then
-             echo ">>> Detected Conflicts in:"
-             echo "$CONFLICTS"
-             python3 omni_brain.py $CONFLICTS
+             echo ">>> CONFLICTS DETECTED. INITIALIZING PYTHON CORE."
+             python3 apex_core.py $CONFLICTS
           else
-             echo ">>> No text conflicts detected. Clean merge."
+             echo ">>> MERGE CLEAN. SKIPPING LOGIC CORE."
           fi
-          rm omni_brain.py
+          rm apex_core.py
 
-      # ========================================================
-      # LAYER 8: FINAL INTEGRITY CHECK & DEPLOY
-      # ========================================================
-      - name: 🔍 Integrity Scan & Deploy
+      # 5. VERIFICATION & DEPLOYMENT
+      - name: 🔒 Verification & Deployment
         run: |
-          # A. Final Conflict Check
-          if [[ -n $(git diff --name-only --diff-filter=U) ]]; then
-             echo "❌ CRITICAL: Unmerged files remain even after Nuclear Fallback."
-             # This theoretically shouldn't happen due to logic, but safety first.
-             exit 1
-          fi
-          
-          # B. Marker Sweep
+          # A. MARKER SWEEP (Safety Net)
+          # If AI failed to remove markers but returned code, we force delete markers
           if grep -r "<<<<<<< HEAD" . --exclude-dir=.github; then
-             echo "⚠️ Warning: Markers found. Attempting sed cleanup..."
-             # Emergency Cleanup: If markers exist, strip lines containing them
+             echo "⚠️ WARNING: Residual markers detected. Performing sanitation..."
              grep -r -l "<<<<<<< HEAD" . | xargs sed -i '/<<<<<<< HEAD/d'
              grep -r -l "=======" . | xargs sed -i '/=======/d'
              grep -r -l ">>>>>>>" . | xargs sed -i '/>>>>>>>/d'
           fi
+          
+          # B. INDEX CHECK
+          if [[ -n $(git diff --name-only --diff-filter=U) ]]; then
+             echo "❌ CRITICAL FAILURE: Unmerged files persist."
+             exit 1
+          fi
 
-          # C. Safe Commit
+          # C. COMMIT PREPARATION
+          # Isolate toolchains/submodules
           git rm -r --cached toolchains > /dev/null 2>&1 || true
           git add .
           git reset HEAD toolchains > /dev/null 2>&1 || true
@@ -351,36 +341,32 @@ jobs:
           if git diff-index --quiet HEAD --; then
              echo "⚠️ No changes to commit."
           else
-             git commit -m "Omni-Merge: Auto-Resolved with Apex Logic"
+             git commit -m "Apex: Professional Auto-Merge (Gemini 2.5)"
              
-             TMP="${{ steps.merge_step.outputs.tmp_branch }}"
              TARGET="${{ inputs.target_branch }}"
+             TEMP="${{ steps.merge.outputs.branch }}"
              
-             # Robust Push Loop
+             # D. PUSH SEQUENCE
              git repack -a -d
              for i in {1..5}; do
-                if git push origin "$TMP:refs/heads/$TARGET"; then
-                   echo "✅ MISSION COMPLETE: Deployed to $TARGET"
-                   git push origin --delete "$TMP"
+                if git push origin "$TEMP:refs/heads/$TARGET"; then
+                   echo "✅ DEPLOYMENT SUCCESSFUL: $TARGET"
+                   git push origin --delete "$TEMP"
                    exit 0
                 fi
-                echo "   🔄 Retrying push..."
+                echo "   🔄 Push collision. Retrying in 5s..."
                 sleep 5
              done
              exit 1
           fi
 
-      # ========================================================
-      # LAYER 9: FAIL-SAFE REPORTING
-      # ========================================================
-      - name: 📝 Create Failure Report PR
+      # 6. REPORTING
+      - name: 📝 Failure Report
         if: failure()
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          title: "❌ Omni-Merge Failed: Manual Intervention Required"
-          body: |
-            The Neural Network failed to resolve conflicts cleanly.
-            **Branch:** `${{ steps.merge_step.outputs.tmp_branch }}`
-          branch: ${{ steps.merge_step.outputs.tmp_branch }}
+          title: "❌ Apex Merge Failed"
+          body: "The Apex workflow encountered an unresolvable state on branch `${{ steps.merge.outputs.branch }}`."
+          branch: ${{ steps.merge.outputs.branch }}
           base: ${{ inputs.target_branch }}
