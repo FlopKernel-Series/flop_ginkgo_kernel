@@ -31,7 +31,7 @@ permissions:
   pull-requests: write
 
 jobs:
-  apex_sovereign:
+  apex_engine:
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -40,10 +40,11 @@ jobs:
 
     steps:
       # ========================================================
-      # 1. PROFESSIONAL INITIALIZATION
+      # 1. PROFESSIONAL ENVIRONMENT & CHECKOUT
       # ========================================================
-      - name: 🛡️ Initialize System
+      - name: 🛡️ Harden System
         run: |
+          # Clean bloat to prevent disk space issues
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends git python3-pip python3-requests
@@ -54,21 +55,20 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: ⚙️ Configure Git
+      - name: ⚙️ Configure Git Logic
         run: |
-          git config --global user.name "Apex-Sovereign"
+          git config --global user.name "Apex-GodMode"
           git config --global user.email "bot@floppykernel.ai"
           git config merge.renameLimit 999999
           
-          # --- BINARY PROTECTION ---
-          # Prevents text-merge attempts on binaries
+          # BINARY GUARD: Protect Kernel Blobs
           echo "* -text" > .gitattributes
           for ext in png dtb gz ko o bpf zip jpg bmp; do
             echo "*.$ext binary" >> .gitattributes
           done
 
       # ========================================================
-      # 2. INJECT APEX LOGIC ENGINE (PYTHON)
+      # 2. INJECT THE APEX BRAIN (PYTHON LOGIC)
       # ========================================================
       - name: 🧠 Inject Apex Brain
         run: |
@@ -79,12 +79,13 @@ jobs:
           API_KEY = os.environ.get("AI_KEY", "").strip()
           MODEL_ID = os.environ.get("AI_MODEL", "models/gemini-2.5-flash")
           
-          # SAFETY & QUOTA SETTINGS
+          # --- TUNING ---
           MAX_RETRIES = 5
-          RESET_DELAY = 5  # Seconds to sleep after EVERY file (Quota Reset)
+          # RESET AI: We wait 5 seconds after every file to reset quota
+          SESSION_RESET_TIME = 5
 
           def clean_response(text):
-              """Sanitizes AI output to strictly code."""
+              """Sanitizes AI output."""
               text = re.sub(r'^```[a-z]*\n', '', text, flags=re.MULTILINE)
               text = re.sub(r'\n```$', '', text, flags=re.MULTILINE)
               text = re.sub(r'<<<<<<< .*', '', text)
@@ -93,118 +94,96 @@ jobs:
               return text.strip()
 
           def validate_syntax(text, filename):
-              """Validates structural integrity."""
+              """Checks for basic C/C++ integrity."""
               clean = re.sub(r'//.*', '', text)
               clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
               
-              # Passthrough for non-code files
-              if any(filename.endswith(x) for x in ['.txt', '.gitignore', 'Makefile', '.mk']):
+              # Allow Makefiles/Lists/Txt
+              if any(filename.endswith(x) for x in ['.txt', '.gitignore', 'Makefile', '.mk', '.bp']):
                   return True
-
-              # C/C++ Brace Balance
+              
+              # C-Balance Check
               return clean.count('{') == clean.count('}')
 
-          def reset_quota_session():
-              """
-              Forces a system sleep to reset the 'Requests Per Minute' counter.
-              """
-              print(f"      ⏳ System: Quota Cool-down ({RESET_DELAY}s)...")
-              time.sleep(RESET_DELAY)
+          def reset_session():
+              """The 'Reset' Logic you requested."""
+              print(f"      ⏳ System: Resetting Session ({SESSION_RESET_TIME}s)...")
+              time.sleep(SESSION_RESET_TIME)
 
           def execute_gemini_request(prompt):
-              """Executes API call with robust error handling."""
               url = f"https://generativelanguage.googleapis.com/v1beta/{MODEL_ID}:generateContent?key={API_KEY}"
               headers = {'Content-Type': 'application/json'}
               data = {
                   "contents": [{"parts": [{"text": prompt}]}],
-                  "generationConfig": {
-                      "temperature": 0.2, # Low temp for precision
-                      "maxOutputTokens": 8192
-                  }
+                  "generationConfig": {"temperature": 0.2, "maxOutputTokens": 8192}
               }
 
               for attempt in range(1, MAX_RETRIES + 1):
                   try:
                       response = requests.post(url, headers=headers, json=data, timeout=60)
-                      
                       if response.status_code == 200:
                           try:
                               return clean_response(response.json()['candidates'][0]['content']['parts'][0]['text'])
-                          except KeyError:
-                              print(f"      ⚠️ [Attempt {attempt}] Malformed JSON.")
+                          except: return None
                       elif response.status_code == 429:
-                          wait = attempt * 10
-                          print(f"      🛑 [Attempt {attempt}] Rate Limit (429). Pausing {wait}s...")
+                          wait = attempt * 15
+                          print(f"      🛑 [429] Rate Limit. Pausing {wait}s...")
                           time.sleep(wait)
                           continue
                       elif response.status_code >= 500:
-                          print(f"      ⚠️ [Attempt {attempt}] Server Error {response.status_code}. Retrying...")
                           time.sleep(5)
                           continue
                       else:
-                          print(f"      ❌ [Attempt {attempt}] Fatal Error {response.status_code}")
+                          print(f"      ❌ Fatal API Error: {response.status_code}")
                           return None
-                  except Exception as e:
-                      print(f"      ⚠️ [Attempt {attempt}] Network Exception: {e}")
-                      time.sleep(5)
-              
+                  except: time.sleep(5)
               return None
 
           def solve_heuristic(local, remote, filename):
-              """Layer 1: Instant Math Solver (Saves Tokens)."""
+              """Solves Lists/Imports instantly without AI."""
               l_lines = [x.strip() for x in local.splitlines() if x.strip()]
               r_lines = [x.strip() for x in remote.splitlines() if x.strip()]
               
-              # 1. Gitignore / Lists
+              # Gitignore / Txt
               if filename.endswith('.gitignore') or filename.endswith('.txt'):
-                  print(f"      ⚡ [LOGIC] Merging List File")
-                  return "\n".join(sorted(list(set(l_lines + r_lines))))
-
-              # 2. Imports / Includes
-              if all(x.startswith('#include') or x.startswith('import') for x in l_lines + r_lines):
-                  print("      ⚡ [LOGIC] Merging Headers")
+                  print(f"      ⚡ [LOGIC] Merging List")
                   return "\n".join(sorted(list(set(l_lines + r_lines))))
               
+              # Header Imports
+              if all(x.startswith('#include') or x.startswith('import') for x in l_lines + r_lines):
+                  print("      ⚡ [LOGIC] Merging Includes")
+                  return "\n".join(sorted(list(set(l_lines + r_lines))))
               return None
 
           def process_block(local, remote, pre, post, filename):
-              # A. Heuristic Check
+              # 1. Heuristic
               heuristic = solve_heuristic(local, remote, filename)
               if heuristic: return heuristic
 
-              # B. AI Processing
-              print(f"      🧠 [AI] Querying {MODEL_ID}...")
-              
+              # 2. AI
+              print(f"      🧠 [AI] Engaging {MODEL_ID}...")
               prompt = f"""
-              ROLE: Expert Linux Kernel Architect.
+              ROLE: Expert Linux Kernel Developer.
               TASK: Resolve Git Conflict in '{filename}'.
-              
               RULES:
-              1. PRESERVE 'LOCAL' (My Driver Changes) - This is priority.
-              2. INTEGRATE 'REMOTE' (Upstream) only if it doesn't break LOCAL.
-              3. OUTPUT ONLY THE MERGED CODE BLOCK. NO MARKDOWN.
+              1. PRESERVE 'LOCAL' (Downstream Driver Logic).
+              2. MERGE 'REMOTE' (Upstream Fixes) only if safe.
+              3. OUTPUT CODE ONLY. NO MARKDOWN.
               
               CONTEXT BEFORE:
               {pre}
-              
               <<<<<<< LOCAL
               {local}
               =======
               {remote}
               >>>>>>> REMOTE
-              
               CONTEXT AFTER:
               {post}
               """
               
               ai_sol = execute_gemini_request(prompt)
-              
-              if ai_sol:
-                  if validate_syntax(ai_sol, filename):
-                      return ai_sol
-                  else:
-                      print("      ⚠️ [AI] Syntax Validation Failed.")
-              
+              if ai_sol and validate_syntax(ai_sol, filename):
+                  return ai_sol
               return None
 
           def process_file(filepath):
@@ -220,7 +199,6 @@ jobs:
                   line = lines[i]
                   if line.startswith('<<<<<<<'):
                       start = i
-                      # Context: 100 lines for visibility
                       pre_ctx = "".join(lines[max(0, start-100):start])
                       
                       local_blk, remote_blk = [], []
@@ -236,23 +214,18 @@ jobs:
                       
                       post_ctx = "".join(lines[i+1:min(len(lines), i+100)])
                       
-                      print(f"🔎 Analyzing: {filepath} (Line {start})")
-                      
-                      # SOLVE
+                      print(f"🔎 Conflict: {filepath}")
                       resolved = process_block("".join(local_blk), "".join(remote_blk), pre_ctx, post_ctx, filepath)
                       
                       if resolved:
                           new_lines.append(resolved + "\n")
                           print("      ✅ Resolved.")
-                          modified = True
                       else:
                           print("      ☢️ FAILED. Enforcing LOCAL (Ours).")
-                          new_lines.append("".join(local_blk)) # NUCLEAR FALLBACK
-                          modified = True
+                          new_lines.append("".join(local_blk))
                       
-                      # IMPORTANT: RESET QUOTA AFTER EVERY BLOCK
-                      reset_quota_session()
-
+                      modified = True
+                      reset_session()
                   else:
                       new_lines.append(line)
                   i += 1
@@ -262,72 +235,81 @@ jobs:
                   subprocess.run(["git", "add", filepath], check=True)
 
           if __name__ == "__main__":
-              # Professional: Read from file list to avoid ARG_MAX limits
-              if not os.path.exists("conflicts_list.txt"):
-                  print("No conflicts list found.")
-                  sys.exit(0)
-                  
-              with open("conflicts_list.txt", "r") as f:
-                  files = [line.strip() for line in f if line.strip()]
+              if not os.path.exists("conflicts.txt"): sys.exit(0)
+              with open("conflicts.txt", "r") as f:
+                  files = [x.strip() for x in f if x.strip()]
               
-              if not files:
-                  print("No files to process.")
-                  sys.exit(0)
-
-              print(f"📋 Processing {len(files)} conflicted files...")
+              print(f"📋 Processing {len(files)} conflicts...")
               for f in files:
-                  if os.path.exists(f): 
-                      process_file(f)
+                  if os.path.exists(f): process_file(f)
           EOF
 
       # ========================================================
-      # 3. MERGE & DETECT
+      # 3. MERGE EXECUTION (THE FIX)
       # ========================================================
-      - name: 🧬 Merge & Isolate Conflicts
+      - name: 🧬 Merge & Detect
         id: merge
+        shell: bash
         run: |
+          # 1. SETUP REMOTES
           git remote add upstream "${{ inputs.upstream_repo }}" 2>/dev/null || true
           git fetch upstream "${{ inputs.upstream_branch }}" --no-tags
           
+          # 2. CREATE TEMP BRANCH
           TS=$(date +%s)
-          TMP="sovereign-$TS"
+          TMP="godmode-$TS"
           git checkout -b "$TMP" "origin/${{ inputs.target_branch }}"
           echo "branch=$TMP" >> $GITHUB_OUTPUT
 
-          echo ">>> STARTING HISTOGRAM MERGE..."
-          # The '|| true' ensures we don't crash here. We WANT to handle conflicts.
+          # 3. CLEAN SUBMODULES (CRITICAL FIX: PRE-MERGE CLEANUP)
+          # Removes toolchains from index so merge doesn't trip on them
+          echo "🧹 Sanitizing index..."
+          git rm -r --cached toolchains > /dev/null 2>&1 || true
+
+          # 4. EXECUTE MERGE
+          echo ">>> STARTING MERGE..."
+          # set +e ensures script doesn't die on conflict
+          set +e 
           git merge "upstream/${{ inputs.upstream_branch }}" \
             --no-commit --no-ff \
             -s ort \
             -X find-renames=50% \
             -X ignore-all-space \
-            -X diff-algorithm=histogram || true
+            -X diff-algorithm=histogram
           
-          # GENERATE CONFLICT LIST
-          git diff --name-only --diff-filter=U > conflicts_list.txt
+          MERGE_EXIT_CODE=$?
+          echo "Merge Exit Code: $MERGE_EXIT_CODE"
+
+          # 5. CAPTURE CONFLICTS
+          # We check for Unmerged (U) files
+          git diff --name-only --diff-filter=U > conflicts.txt
+          COUNT=$(wc -l < conflicts.txt)
           
-          # DEBUG INFO
-          COUNT=$(wc -l < conflicts_list.txt)
-          echo "found_conflicts=$COUNT" >> $GITHUB_OUTPUT
-          echo ">>> Found $COUNT conflicts."
-          cat conflicts_list.txt
+          if [ "$COUNT" -gt "0" ]; then
+             echo "found_conflicts=true" >> $GITHUB_OUTPUT
+             echo "⚠️ Detected $COUNT conflicts."
+             cat conflicts.txt
+          else
+             echo "found_conflicts=false" >> $GITHUB_OUTPUT
+             echo "✅ Clean merge."
+          fi
 
       # ========================================================
-      # 4. ENGAGE APEX SOVEREIGN (AI)
+      # 4. ENGAGE APEX BRAIN
       # ========================================================
-      - name: 🚑 Engage Apex Sovereign
-        if: steps.merge.outputs.found_conflicts > 0
+      - name: 🚑 Engage Apex AI
+        if: steps.merge.outputs.found_conflicts == 'true'
         run: |
-          echo ">>> STARTING AI RESOLUTION ENGINE..."
+          echo ">>> STARTING AI RESOLUTION..."
           python3 apex_brain.py
-          rm apex_brain.py conflicts_list.txt
+          rm apex_brain.py conflicts.txt
 
       # ========================================================
       # 5. VERIFY & DEPLOY
       # ========================================================
       - name: 🔒 Verify & Push
         run: |
-          # 1. MARKER CLEANUP (Safety Net)
+          # 1. MARKER SAFETY CHECK
           if grep -r "<<<<<<< HEAD" . --exclude-dir=.github; then
              echo "⚠️ Cleaning residual markers..."
              grep -r -l "<<<<<<< HEAD" . | xargs sed -i '/<<<<<<< HEAD/d'
@@ -335,26 +317,28 @@ jobs:
              grep -r -l ">>>>>>>" . | xargs sed -i '/>>>>>>>/d'
           fi
           
-          # 2. FINAL INTEGRITY CHECK
+          # 2. FINAL INDEX CHECK
           if [[ -n $(git diff --name-only --diff-filter=U) ]]; then
              echo "❌ CRITICAL: Unmerged files remain."
              exit 1
           fi
 
           # 3. COMMIT
-          git rm -r --cached toolchains > /dev/null 2>&1 || true
+          # Re-add everything carefully
           git add .
+          
+          # Exclude toolchains again to keep repo clean
           git reset HEAD toolchains > /dev/null 2>&1 || true
           
           if git diff-index --quiet HEAD --; then
              echo "⚠️ No changes to commit."
           else
-             git commit -m "Apex Sovereign: Auto-Merge (${{ inputs.ai_model }})"
+             git commit -m "Apex GodMode: Auto-Merge (${{ inputs.ai_model }})"
              
              TARGET="${{ inputs.target_branch }}"
              BRANCH="${{ steps.merge.outputs.branch }}"
              
-             # 4. ROBUST PUSH LOOP
+             # 4. PUSH
              git repack -a -d
              for i in {1..5}; do
                 if git push origin "$BRANCH:refs/heads/$TARGET"; then
@@ -362,21 +346,21 @@ jobs:
                    git push origin --delete "$BRANCH"
                    exit 0
                 fi
-                echo "   🔄 Push conflict. Retrying..."
+                echo "   🔄 Retrying push..."
                 sleep 5
              done
              exit 1
           fi
 
       # ========================================================
-      # 6. FAIL-SAFE REPORTING
+      # 6. REPORTING
       # ========================================================
       - name: 📝 Failure Report
         if: failure()
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          title: "❌ Apex Sovereign Failed"
+          title: "❌ Apex GodMode Failed"
           body: "Manual intervention required on branch `${{ steps.merge.outputs.branch }}`."
           branch: ${{ steps.merge.outputs.branch }}
           base: ${{ inputs.target_branch }}
