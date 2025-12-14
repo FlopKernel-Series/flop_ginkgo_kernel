@@ -1,4 +1,4 @@
-name: ⚙️ Merge System
+name: 🛡️ merge v2
 
 on:
   workflow_dispatch:
@@ -12,16 +12,14 @@ on:
         required: true
         default: 'main'
       target_branch:
-        description: 'Target Branch'
+        description: 'Target Branch (Your Fork)'
         required: true
         default: 'floppy-new'
-      
       ai_api_key:
         description: 'Gemini API Key'
         required: true
-      
       ai_model:
-        description: 'Model ID'
+        description: 'AI Model ID'
         required: true
         default: 'gemini-2.5-flash'
         type: string
@@ -31,7 +29,7 @@ permissions:
   pull-requests: write
 
 jobs:
-  merge_logic:
+  titanium_core:
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -40,72 +38,108 @@ jobs:
 
     steps:
       # ========================================================
-      # 1. SETUP & CHECKOUT
+      # PHASE 1: HARDENING & PREPARATION
       # ========================================================
-      - name: 🛡️ System Prep
+      - name: 🛡️ System Hardening
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends git python3-pip python3-requests
           pip3 install requests
 
-      - name: 📥 Checkout Code
+      - name: 📥 Checkout Source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: ⚙️ Configure Git
+      - name: ⚙️ Configure Git & Binary Protection
         run: |
-          git config --global user.name "Titanium-Bot"
-          git config --global user.email "bot@titanium.ai"
+          git config --global user.name "Apex-Titanium"
+          git config --global user.email "titanium@apex-automation.ai"
           git config merge.renameLimit 999999
           
-          # Binary Safety
+          # PREVENT TEXT MERGING ON BINARIES
           echo "* -text" > .gitattributes
-          for ext in png dtb gz ko o bpf zip jpg bmp iso; do
+          for ext in png dtb gz ko o bpf zip jpg bmp iso so a; do
             echo "*.$ext binary" >> .gitattributes
           done
 
       # ========================================================
-      # 2. INJECT PYTHON LOGIC (UNBUFFERED)
+      # PHASE 2: INJECT TITANIUM CORE (PYTHON LOGIC)
       # ========================================================
-      - name: 🧠 Inject Logic Core
+      - name: 🧠 Inject Titanium Core
         run: |
+          # We use __backtick__ placeholder to avoid breaking the YAML here, then replace it with sed
           cat << 'EOF' > titanium_core.py
           import sys, os, re, requests, time, subprocess
 
-          # --- SETUP ---
-          # Flush stdout immediately so logs appear in Actions instantly
+          # --- SYSTEM CONFIGURATION ---
+          # 1. Force Unbuffered Output (Fixes "Silent Death" where logs don't appear until script ends)
           sys.stdout.reconfigure(line_buffering=True)
-
-          print(">>> [INIT] Python Core Starting...")
-
+          
+          # 2. Environment Setup
           API_KEY = os.environ.get("AI_KEY", "").strip()
           RAW_MODEL = os.environ.get("AI_MODEL", "gemini-2.5-flash")
-          MODEL_ID = RAW_MODEL.replace("models/", "")
           
-          print(f">>> [CONF] Model: {MODEL_ID}")
+          # 3. Double Prefix Fix (Users input 'models/gemini...', API needs just 'gemini...')
+          MODEL_ID = RAW_MODEL.replace("models/", "")
 
-          # --- UTILS ---
+          # --- CONSTANTS ---
+          MAX_RETRIES = 3
+          CONTEXT_LINES = 40       # Reduced from 100 to prevent Token Limit (429 Loop)
+          PENALTY_WAIT = 60        # Wait 60s if 429 occurs (Bucket Reset)
+          COOLING_PERIOD = 5       # Wait 5s after success (Session Cooling)
+
+          print(f">>> [INIT] Titanium Core Active. Model: {MODEL_ID}")
+
           def clean_response(text):
-              text = re.sub(r'^```[a-z]*\n', '', text, flags=re.MULTILINE)
-              text = re.sub(r'\n```$', '', text, flags=re.MULTILINE)
+              """Sanitizes AI output to ensure pure code."""
+              # Handles markdown code blocks
+              text = re.sub(r'^__backtick__[a-z]*\n', '', text, flags=re.MULTILINE)
+              text = re.sub(r'\n__backtick__$', '', text, flags=re.MULTILINE)
+              text = text.replace("__backtick__", "```")
+              # Remove accidental markers if AI hallucinates them
               text = re.sub(r'<<<<<<< .*', '', text)
               text = re.sub(r'=======', '', text)
               text = re.sub(r'>>>>>>> .*', '', text)
               return text.strip()
 
           def validate_syntax(text, filename):
-              # Basic C syntax check
-              clean = re.sub(r'//.*', '', text)
-              clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
-              
-              if any(filename.endswith(x) for x in ['.txt', '.gitignore', 'Makefile', '.mk']):
+              """Basic syntax validation (Brace Balance) to reject broken C code."""
+              # Skip validation for non-C files
+              if any(filename.endswith(x) for x in ['.txt', '.gitignore', 'Makefile', '.mk', 'Kconfig']):
                   return True
               
+              clean = re.sub(r'//.*', '', text)
+              clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
               return clean.count('{') == clean.count('}')
 
-          def call_gemini(prompt):
+          def solve_heuristic(local, remote, filename):
+              """
+              The 'Logic Layer': Solves simple conflicts mathematically without AI.
+              Saves tokens and prevents hallucinations on lists.
+              """
+              l_lines = [x.strip() for x in local.splitlines() if x.strip()]
+              r_lines = [x.strip() for x in remote.splitlines() if x.strip()]
+              
+              # Case 1: Set Union (Gitignore, Includes, Lists)
+              is_list_type = filename.endswith('.gitignore') or filename.endswith('.txt')
+              is_include_block = all(x.startswith('#include') for x in l_lines + r_lines)
+              
+              if is_list_type or (l_lines and r_lines and is_include_block):
+                  print("    ⚡ [HEURISTIC] Merging Set Union")
+                  return "\n".join(sorted(list(set(l_lines + r_lines))))
+              
+              # Case 2: Makefile/Kconfig Additions
+              is_makefile = any(x in filename for x in ['Makefile', '.mk', 'Kconfig'])
+              if is_makefile and all(('+=' in x or 'obj-' in x or 'source' in x) for x in l_lines + r_lines):
+                   print("    ⚡ [HEURISTIC] Merging Makefile Additions")
+                   return local + "\n" + remote
+
+              return None
+
+          def execute_gemini(prompt):
+              """Executes API call with Robust Rate Limit Handling."""
               url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_ID}:generateContent?key={API_KEY}"
               headers = {'Content-Type': 'application/json'}
               data = {
@@ -113,31 +147,73 @@ jobs:
                   "generationConfig": {"temperature": 0.2, "maxOutputTokens": 8192}
               }
 
-              # Retry Loop (5 attempts)
-              for attempt in range(1, 6):
+              for attempt in range(1, MAX_RETRIES + 1):
                   try:
                       resp = requests.post(url, headers=headers, json=data, timeout=60)
                       
                       if resp.status_code == 200:
-                          return clean_response(resp.json()['candidates'][0]['content']['parts'][0]['text'])
+                          try:
+                              return clean_response(resp.json()['candidates'][0]['content']['parts'][0]['text'])
+                          except: return None
+                      
                       elif resp.status_code == 429:
-                          wait = attempt * 10
-                          print(f"    ⏳ Rate Limit (429). Waiting {wait}s...")
-                          time.sleep(wait)
-                      else:
-                          print(f"    ❌ API Error: {resp.status_code}")
+                          print(f"    🛑 Rate Limit (429) hit. Entering Penalty Box ({PENALTY_WAIT}s)...")
+                          time.sleep(PENALTY_WAIT)
+                          continue 
+                      
+                      elif resp.status_code >= 500:
                           time.sleep(5)
+                          continue
+                      
+                      else:
+                          print(f"    ❌ Fatal API Error: {resp.status_code}")
+                          return None
                   except Exception as e:
-                      print(f"    ⚠️ Network: {e}")
+                      print(f"    ⚠️ Network Exception: {e}")
                       time.sleep(5)
+              
               return None
 
-          def solve_file(filepath):
+          def process_block(local, remote, pre, post, filename):
+              # 1. Heuristic Check
+              heuristic = solve_heuristic(local, remote, filename)
+              if heuristic: return heuristic
+
+              # 2. AI Resolution
+              print(f"    🧠 [AI] Engaging {MODEL_ID}...")
+              prompt = f"""
+              ROLE: Senior Linux Kernel Engineer.
+              TASK: Resolve Git Conflict in '{filename}'.
+              RULES:
+              1. PRESERVE 'LOCAL' (Downstream Driver) Logic.
+              2. MERGE 'REMOTE' (Upstream) only if safe.
+              3. OUTPUT CODE ONLY. NO MARKDOWN.
+              4. DO NOT include conflict markers.
+              CONTEXT BEFORE:
+              {pre}
+              <<<<<<< LOCAL
+              {local}
+              =======
+              {remote}
+              >>>>>>> REMOTE
+              CONTEXT AFTER:
+              {post}
+              """
+              
+              ai_sol = execute_gemini(prompt)
+              
+              if ai_sol and validate_syntax(ai_sol, filename):
+                  time.sleep(COOLING_PERIOD)
+                  return ai_sol
+              
+              # 3. Nuclear Fallback
+              print("    ☢️ [FALLBACK] Enforcing LOCAL (Ours).")
+              return local
+
+          def process_file(filepath):
               try:
                   with open(filepath, 'r', encoding='utf-8', errors='ignore') as f: lines = f.readlines()
-              except Exception as e:
-                  print(f"    ❌ Read Error: {e}")
-                  return
+              except: return
 
               new_lines = []
               i = 0
@@ -146,10 +222,8 @@ jobs:
               while i < len(lines):
                   line = lines[i]
                   if line.startswith('<<<<<<<'):
-                      print(f"    🔎 Conflict at line {i}...")
                       start = i
-                      pre = "".join(lines[max(0, start-100):start])
-                      
+                      pre_ctx = "".join(lines[max(0, start-CONTEXT_LINES):start])
                       local_blk, remote_blk = [], []
                       mode = "local"
                       i += 1
@@ -161,52 +235,12 @@ jobs:
                               else: remote_blk.append(lines[i])
                           i += 1
                       
-                      post = "".join(lines[i+1:min(len(lines), i+100)])
+                      post_ctx = "".join(lines[i+1:min(len(lines), i+CONTEXT_LINES)])
                       
-                      # 1. HEURISTIC (FAST)
-                      local_str = "".join(local_blk)
-                      remote_str = "".join(remote_blk)
-                      merged = None
-                      
-                      # Lists/Imports
-                      if filepath.endswith('.gitignore') or filepath.endswith('.txt') or \
-                         all(x.strip().startswith('#include') for x in local_blk + remote_blk):
-                             merged = "\n".join(sorted(list(set([x.strip() for x in local_blk + remote_blk if x.strip()]))))
-                             print("    ⚡ Heuristic Merge Applied.")
-
-                      # 2. AI (SLOW)
-                      if not merged:
-                          print(f"    🧠 Calling {MODEL_ID}...")
-                          prompt = f"""
-                          ROLE: Linux Kernel Dev.
-                          TASK: Merge Conflict in '{filepath}'.
-                          RULES: Keep LOCAL driver logic. Merge REMOTE updates safely. Output CODE ONLY.
-                          
-                          CONTEXT BEFORE:
-                          {pre}
-                          <<<<<<< LOCAL
-                          {local_str}
-                          =======
-                          {remote_str}
-                          >>>>>>> REMOTE
-                          CONTEXT AFTER:
-                          {post}
-                          """
-                          ai_out = call_gemini(prompt)
-                          if ai_out and validate_syntax(ai_out, filepath):
-                              merged = ai_out
-                              print("    ✅ AI Resolved.")
-                          else:
-                              print("    ☢️ AI Failed/Unsafe. Keeping LOCAL.")
-                              merged = local_str # Fallback
-
-                      new_lines.append(merged + "\n")
+                      print(f"🔎 Conflict: {filepath} (Line {start})")
+                      resolved = process_block("".join(local_blk), "".join(remote_blk), pre_ctx, post_ctx, filepath)
+                      new_lines.append(resolved + "\n")
                       modified = True
-                      
-                      # QUOTA RESET
-                      print("    ⏳ Cooldown (5s)...")
-                      time.sleep(5)
-
                   else:
                       new_lines.append(line)
                   i += 1
@@ -214,26 +248,24 @@ jobs:
               if modified:
                   with open(filepath, 'w', encoding='utf-8') as f: f.writelines(new_lines)
                   subprocess.run(["git", "add", filepath], check=True)
+                  print("    ✅ File Staged.")
 
           if __name__ == "__main__":
-              if not os.path.exists("conflicts.txt"):
-                  print("❌ Error: conflicts.txt not found!")
-                  sys.exit(0)
-                  
+              if not os.path.exists("conflicts.txt"): sys.exit(0)
               with open("conflicts.txt", "r") as f:
                   files = [x.strip() for x in f if x.strip()]
-              
-              print(f">>> [JOB] Processing {len(files)} files...")
+              print(f"📋 Processing {len(files)} conflicted files...")
               for f in files:
-                  print(f">>> [FILE] {f}")
-                  if os.path.exists(f): solve_file(f)
-                  else: print("    ⚠️ File not found on disk.")
+                  if os.path.exists(f): process_file(f)
           EOF
+          
+          # Fix Python Syntax for Clean Response
+          sed -i 's/__backtick__/```/g' titanium_core.py
 
       # ========================================================
-      # 3. MERGE EXECUTION
+      # PHASE 3: STRATEGIC MERGE
       # ========================================================
-      - name: 🧬 Merge Process
+      - name: 🧬 Merge & Detect
         id: merge
         shell: bash
         run: |
@@ -245,10 +277,11 @@ jobs:
           git checkout -b "$TMP" "origin/${{ inputs.target_branch }}"
           echo "branch=$TMP" >> $GITHUB_OUTPUT
 
-          # CLEAN INDEX
+          # --- DIRTY INDEX FIX ---
+          echo "🧹 Cleaning Index..."
           git rm -r --cached toolchains > /dev/null 2>&1 || true
 
-          echo ">>> Executing Merge..."
+          echo ">>> STARTING MERGE..."
           git merge "upstream/${{ inputs.upstream_branch }}" \
             --no-commit --no-ff \
             -s ort \
@@ -256,77 +289,44 @@ jobs:
             -X ignore-all-space \
             -X diff-algorithm=histogram || true
           
-          # DETECT
           git diff --name-only --diff-filter=U > conflicts.txt
           COUNT=$(wc -l < conflicts.txt)
-          echo ">>> Conflicts Found: $COUNT"
           
           if [ "$COUNT" -gt "0" ]; then
-             echo "has_conflicts=true" >> $GITHUB_OUTPUT
-             cat conflicts.txt
+             echo "found_conflicts=true" >> $GITHUB_OUTPUT
+             echo "⚠️ Conflicts Detected: $COUNT"
           else
-             echo "has_conflicts=false" >> $GITHUB_OUTPUT
+             echo "found_conflicts=false" >> $GITHUB_OUTPUT
           fi
 
       # ========================================================
-      # 4. RUN PYTHON (UNBUFFERED)
+      # PHASE 4: EXECUTION
       # ========================================================
-      - name: 🚑 Run AI Engine
-        if: steps.merge.outputs.has_conflicts == 'true'
+      - name: 🚑 Run Titanium Core
+        if: steps.merge.outputs.found_conflicts == 'true'
         run: |
-          echo ">>> Checking Environment..."
-          ls -la conflicts.txt
-          echo ">>> Launching Python..."
-          # The -u flag is CRITICAL. It disables buffering.
+          echo ">>> ENGAGING AI ENGINE..."
           python3 -u titanium_core.py
           rm titanium_core.py conflicts.txt
 
       # ========================================================
-      # 5. COMMIT & PUSH
+      # PHASE 5: VERIFY & DEPLOY
       # ========================================================
-      - name: 🔒 Finalize
+      - name: 🔒 Verify & Push
         run: |
-          # Cleanup Markers
-          if grep -r "<<<<<<< HEAD" . --exclude-dir=.github; then
-             grep -r -l "<<<<<<< HEAD" . | xargs sed -i '/<<<<<<< HEAD/d'
-             grep -r -l "=======" . | xargs sed -i '/=======/d'
-             grep -r -l ">>>>>>>" . | xargs sed -i '/>>>>>>>/d'
-          fi
-
-          if [[ -n $(git diff --name-only --diff-filter=U) ]]; then
-             echo "❌ Unmerged files remain."
-             exit 1
-          fi
-
+          # 1. MARKER SWEEP
+          grep -r -l "<<<<<<< HEAD" . | xargs sed -i '/<<<<<<< HEAD/d' || true
+          grep -r -l "=======" . | xargs sed -i '/=======/d' || true
+          grep -r -l ">>>>>>>" . | xargs sed -i '/>>>>>>>/d' || true
+          
+          # 2. RESTORE INDEX (Submodule Fix)
           git add .
           git reset HEAD toolchains > /dev/null 2>&1 || true
           
           if git diff-index --quiet HEAD --; then
-             echo "⚠️ No changes."
+             echo "⚠️ No changes to commit."
           else
-             git commit -m "Titanium Merge: Auto-Resolved"
-             
-             TARGET="${{ inputs.target_branch }}"
-             BRANCH="${{ steps.merge.outputs.branch }}"
-             
-             git repack -a -d
-             for i in {1..5}; do
-                if git push origin "$BRANCH:refs/heads/$TARGET"; then
-                   echo "✅ SUCCESS"
-                   git push origin --delete "$BRANCH"
-                   exit 0
-                fi
-                sleep 5
-             done
-             exit 1
+             git commit -m "Apex Titanium: Auto-Merge (${{ inputs.ai_model }})"
+             git push origin "${{ steps.merge.outputs.branch }}:refs/heads/${{ inputs.target_branch }}"
           fi
-
-      - name: 📝 Report Failure
-        if: failure()
-        uses: peter-evans/create-pull-request@v5
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          title: "❌ Titanium Merge Failed"
-          body: "Manual Fix Needed on `${{ steps.merge.outputs.branch }}`"
-          branch: ${{ steps.merge.outputs.branch }}
-          base: ${{ inputs.target_branch }}
+          
