@@ -65,7 +65,7 @@ jobs:
           done
 
       # ========================================================
-      # PHASE 2: INJECT TITANIUM CORE (PROFESSIONAL ENGINE)
+      # PHASE 2: INJECT TITANIUM CORE (ADAPTIVE ENGINE)
       # ========================================================
       - name: 🧠 Inject Titanium Core
         run: |
@@ -80,12 +80,12 @@ jobs:
           MODEL = os.environ.get("MODEL_ID", "gemini-2.5-flash").replace("models/", "")
           
           # --- TUNING PARAMETERS ---
-          CONTEXT_LINES = 45       # Optimized for Token Efficiency
+          CONTEXT_LINES = 30       # Reduced to 30 to lower Token Usage
           MAX_RETRIES = 3          # Attempts per file
-          REQUEST_DELAY = 5        # MINIMUM sleep after EVERY request (Prevents Bursting)
-          PENALTY_WAIT = 30        # Initial wait for 429s
+          REQUEST_DELAY = 12       # 12s = 5 Requests/Min (Safe Zone)
+          PENALTY_WAIT = 60        # Full Bucket Reset for 429s
 
-          print(f">>> [INIT] Titanium v14.0 Online. Model: {MODEL}")
+          print(f">>> [INIT] Titanium v15.0 (Adaptive). Model: {MODEL}")
 
           def clean_response(text):
               """Sanitizes AI output to ensure pure code."""
@@ -114,10 +114,27 @@ jobs:
                   return False
               return True
 
+          def solve_heuristic(local, remote, filename):
+              """
+              Bypasses AI for Configuration Files.
+              Uses Set Union to merge lists (Kconfig, defconfig, gitignore).
+              """
+              # 1. Config & List Files
+              is_config = any(x in filename for x in ['defconfig', 'Kconfig', '.gitignore', '.txt'])
+              
+              if is_config:
+                  print(f"    ⚡ [HEURISTIC] Optimized Merge: {filename}")
+                  # Split, Strip, Unique, Sort
+                  l_lines = set(x.strip() for x in local.splitlines() if x.strip())
+                  r_lines = set(x.strip() for x in remote.splitlines() if x.strip())
+                  merged = sorted(list(l_lines.union(r_lines)))
+                  return "\n".join(merged)
+              
+              return None
+
           def execute_gemini(prompt):
               """
-              Executes API call with ATOMIC Rate Limiting.
-              The sleep happens INSIDE here to throttle retries too.
+              Executes API call with 12s ATOMIC Rate Limiting.
               """
               url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent?key={API_KEY}"
               headers = {'Content-Type': 'application/json'}
@@ -132,7 +149,7 @@ jobs:
                       
                       # 1. SUCCESS
                       if resp.status_code == 200:
-                          # Atomic Cool-down: Sleep AFTER success to clear bucket space
+                          # Atomic Cool-down: 12s Sleep to guarantee < 5 RPM
                           time.sleep(REQUEST_DELAY) 
                           try:
                               return clean_response(resp.json()['candidates'][0]['content']['parts'][0]['text'])
@@ -140,28 +157,32 @@ jobs:
                       
                       # 2. RATE LIMIT (429)
                       elif resp.status_code == 429:
-                          wait = PENALTY_WAIT * attempt + random.uniform(1, 5)
+                          wait = PENALTY_WAIT + random.uniform(1, 10)
                           print(f"    🛑 Rate Limit (429). Cooling {wait:.1f}s...")
                           time.sleep(wait)
                           continue 
                       
                       # 3. SERVER ERROR (5xx)
                       elif resp.status_code >= 500:
-                          time.sleep(5)
+                          time.sleep(10)
                           continue
                       
-                      # 4. FATAL ERROR (400, 403, 404)
                       else:
                           print(f"    ❌ API Error {resp.status_code}: {resp.text[:100]}")
                           return None
                               
                   except Exception as e:
                       print(f"    ⚠️ Network: {e}")
-                      time.sleep(5)
+                      time.sleep(10)
               
               return None
 
           def solve_conflict_block(local, remote, pre, post, filename):
+              # 1. Check Heuristics First
+              heuristic = solve_heuristic(local, remote, filename)
+              if heuristic: return heuristic
+
+              # 2. AI Resolution
               print(f"    🧠 [AI] Thinking...")
               prompt = f"""
               ROLE: Expert Linux Kernel 4.14 Developer.
@@ -292,7 +313,7 @@ jobs:
       - name: 🚑 Run Titanium Core
         if: steps.merge.outputs.found_conflicts == 'true'
         run: |
-          echo ">>> ENGAGING TITANIUM v14..."
+          echo ">>> ENGAGING TITANIUM v15..."
           python3 -u titanium_core.py
           rm titanium_core.py conflicts.txt
 
