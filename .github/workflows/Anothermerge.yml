@@ -1,4 +1,4 @@
-name: 😅 (Auto-Merge)
+name: 🏛️ auto merge v2
 
 on:
   workflow_dispatch:
@@ -21,9 +21,9 @@ on:
         required: true
       
       ai_model:
-        description: 'Model ID (e.g. gemini-2.5-flash)'
+        description: 'Model ID'
         required: true
-        default: 'gemini-2.5-flash'
+        default: 'models/gemini-2.5-flash'
         type: string
 
 permissions:
@@ -31,7 +31,7 @@ permissions:
   pull-requests: write
 
 jobs:
-  apex_core:
+  architect_engine:
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -40,11 +40,11 @@ jobs:
 
     steps:
       # ========================================================
-      # 1. SYSTEM HARDENING & PREPARATION
+      # PHASE 1: INFRASTRUCTURE & HARDENING
       # ========================================================
-      - name: 🛡️ Initialize Environment
+      - name: 🛡️ Harden Environment
         run: |
-          # Remove bloat to prevent disk IO lag
+          # Professional cleanup to ensure IO stability
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends git python3-pip python3-requests
@@ -55,20 +55,21 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: ⚙️ Configure Git Logic
+      - name: ⚙️ Configure Git Systems
         run: |
-          git config --global user.name "Apex-Zenith"
+          git config --global user.name "Apex-Architect"
           git config --global user.email "bot@floppykernel.ai"
           git config merge.renameLimit 999999
           
-          # SAFETY: Protect Kernel Binaries from Text Merging
+          # --- BINARY ASSET PROTECTION SYSTEM ---
+          # Strictly forces Git to treat these as binaries, preventing text-merge corruption
           echo "* -text" > .gitattributes
-          for ext in png dtb gz ko o bpf zip jpg bmp; do
+          for ext in png dtb gz ko o bpf zip jpg bmp iso; do
             echo "*.$ext binary" >> .gitattributes
           done
 
       # ========================================================
-      # 2. INJECT APEX ZENITH BRAIN (Python)
+      # PHASE 2: INJECT THE INTELLIGENCE CORE
       # ========================================================
       - name: 🧠 Inject Apex Brain
         run: |
@@ -77,50 +78,56 @@ jobs:
 
           # --- CONFIGURATION ---
           API_KEY = os.environ.get("AI_KEY", "").strip()
+          # FIX: Robustly handle model name formats (removes 'models/' if present)
           RAW_MODEL = os.environ.get("AI_MODEL", "gemini-2.5-flash")
-          
-          # FIX: Automatically strip 'models/' prefix if user included it
           MODEL_ID = RAW_MODEL.replace("models/", "")
           
           # TUNING
           MAX_RETRIES = 5
-          SESSION_RESET_TIME = 5  # Seconds to sleep after every file
+          # 10s delay ensures we NEVER hit rate limits, even on free tier
+          SESSION_RESET_TIME = 10 
 
           def clean_response(text):
-              """Sanitizes AI output to strictly code."""
+              """Sanitizes AI output to ensure clean code injection."""
               text = re.sub(r'^```[a-z]*\n', '', text, flags=re.MULTILINE)
               text = re.sub(r'\n```$', '', text, flags=re.MULTILINE)
-              # Safety: Remove any hallucinated markers
+              # Remove hallucinated Git markers
               text = re.sub(r'<<<<<<< .*', '', text)
               text = re.sub(r'=======', '', text)
               text = re.sub(r'>>>>>>> .*', '', text)
               return text.strip()
 
           def validate_syntax(text, filename):
-              """Ensures the AI didn't break the code structure."""
+              """
+              Professional Syntax Validator.
+              Returns True if code looks structurally sound.
+              """
               clean = re.sub(r'//.*', '', text)
               clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
               
-              # Allow non-C files to pass
-              if any(filename.endswith(x) for x in ['.txt', '.gitignore', 'Makefile', '.mk', '.bp', '.json']):
+              # Pass-through for non-code files
+              if any(filename.endswith(x) for x in ['.txt', '.gitignore', 'Makefile', '.mk', '.bp', '.json', '.conf']):
                   return True
               
-              # Strict C/C++ Balance Check
-              return clean.count('{') == clean.count('}')
+              # C/C++ Brace Balance Check
+              if clean.count('{') != clean.count('}'):
+                  return False
+              
+              return True
 
           def reset_session():
-              """Pauses execution to allow API quota bucket to refill."""
-              print(f"      ⏳ Quota: Resetting Session ({SESSION_RESET_TIME}s)...")
+              """Forces a session cool-down to reset API quota buckets."""
+              print(f"      ⏳ System: Session Cool-down ({SESSION_RESET_TIME}s)...")
               time.sleep(SESSION_RESET_TIME)
 
           def execute_gemini_request(prompt):
-              # Correct URL Construction
+              """Robust API Caller with Exponential Backoff."""
               url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_ID}:generateContent?key={API_KEY}"
               headers = {'Content-Type': 'application/json'}
               data = {
                   "contents": [{"parts": [{"text": prompt}]}],
                   "generationConfig": {
-                      "temperature": 0.2, # Low temp = High logic
+                      "temperature": 0.2, # Precise Logic
                       "maxOutputTokens": 8192
                   }
               }
@@ -132,15 +139,15 @@ jobs:
                       if response.status_code == 200:
                           try:
                               return clean_response(response.json()['candidates'][0]['content']['parts'][0]['text'])
-                          except:
-                              print("      ⚠️ JSON Parsing Error")
+                          except KeyError:
+                              print("      ⚠️ Error: Unexpected JSON structure.")
                       elif response.status_code == 429:
                           wait = attempt * 10
-                          print(f"      🛑 Rate Limit (429). Cooling down {wait}s...")
+                          print(f"      🛑 Rate Limit (429). Pausing {wait}s...")
                           time.sleep(wait)
                           continue
                       elif response.status_code == 404:
-                          print(f"      ❌ Model Not Found: 'models/{MODEL_ID}'. Check input.")
+                          print(f"      ❌ Critical: Model '{MODEL_ID}' not found.")
                           return None
                       else:
                           print(f"      ❌ API Error: {response.status_code}")
@@ -151,36 +158,46 @@ jobs:
               return None
 
           def solve_heuristic(local, remote, filename):
-              """Layer 1: Solves simple lists/imports instantly (0 Token Cost)."""
+              """
+              Layer 1: Deterministic Solver.
+              Solves lists and imports mathematically, bypassing AI.
+              """
               l_lines = [x.strip() for x in local.splitlines() if x.strip()]
               r_lines = [x.strip() for x in remote.splitlines() if x.strip()]
               
-              # 1. Gitignore / Text Lists / Makefiles
-              if any(filename.endswith(x) for x in ['.gitignore', '.txt']):
-                  print(f"      ⚡ [LOGIC] Merging Unique List")
+              # 1. Configuration/List Files
+              if any(filename.endswith(x) for x in ['.gitignore', '.txt', '.conf']):
+                  print(f"      ⚡ [LOGIC] Merging List File")
                   return "\n".join(sorted(list(set(l_lines + r_lines))))
               
-              # 2. Header Imports
+              # 2. C/C++ Includes
               if all(x.startswith('#include') or x.startswith('import') for x in l_lines + r_lines):
-                  print("      ⚡ [LOGIC] Merging Includes")
+                  print("      ⚡ [LOGIC] Merging Headers")
                   return "\n".join(sorted(list(set(l_lines + r_lines))))
+              
+              # 3. Kconfig/Makefile (Additions only)
+              if all(('obj-' in x or 'CONFIG_' in x) for x in l_lines + r_lines):
+                  print("      ⚡ [LOGIC] Merging Configs")
+                  return local + "\n" + remote
+
               return None
 
           def process_block(local, remote, pre, post, filename):
-              # A. Heuristic Solver
+              # A. Try Heuristic (Fast & Accurate)
               heuristic = solve_heuristic(local, remote, filename)
               if heuristic: return heuristic
 
-              # B. AI Solver
-              print(f"      🧠 [AI] Querying {MODEL_ID}...")
+              # B. Try AI (Smart)
+              print(f"      🧠 [AI] Engaging {MODEL_ID}...")
+              
               prompt = f"""
-              ROLE: Expert Linux Kernel Developer.
+              ROLE: Senior Linux Kernel Architect.
               TASK: Resolve Git Conflict in '{filename}'.
               
-              MANDATES:
-              1. PRESERVE 'LOCAL' (Downstream Driver Logic) at all costs.
-              2. INTEGRATE 'REMOTE' (Upstream) only if it is safe.
-              3. OUTPUT CODE ONLY. NO MARKDOWN.
+              DIRECTIVES:
+              1. PRESERVE 'LOCAL' (Our Driver Logic) - High Priority.
+              2. MERGE 'REMOTE' (Upstream) - Only if it improves core logic without breaking Local.
+              3. FORMAT: Output raw C code only. No Markdown. No comments.
               
               CONTEXT BEFORE:
               {pre}
@@ -195,9 +212,12 @@ jobs:
               
               ai_sol = execute_gemini_request(prompt)
               
-              # C. Validation
-              if ai_sol and validate_syntax(ai_sol, filename):
-                  return ai_sol
+              # C. Validation Layer
+              if ai_sol:
+                  if validate_syntax(ai_sol, filename):
+                      return ai_sol
+                  else:
+                      print("      ⚠️ [AI] Validation Failed: Syntax Corruption Detected.")
               
               return None
 
@@ -214,7 +234,7 @@ jobs:
                   line = lines[i]
                   if line.startswith('<<<<<<<'):
                       start = i
-                      # Context: 100 lines for structural awareness
+                      # Context Expansion: 100 lines for maximum AI visibility
                       pre_ctx = "".join(lines[max(0, start-100):start])
                       
                       local_blk, remote_blk = [], []
@@ -230,19 +250,19 @@ jobs:
                       
                       post_ctx = "".join(lines[i+1:min(len(lines), i+100)])
                       
-                      print(f"🔎 Conflict: {filepath} (Line {start})")
+                      print(f"🔎 Analyzing: {filepath} (Line {start})")
                       resolved = process_block("".join(local_blk), "".join(remote_blk), pre_ctx, post_ctx, filepath)
                       
                       if resolved:
                           new_lines.append(resolved + "\n")
                           print("      ✅ Resolved.")
                       else:
-                          # NUCLEAR FALLBACK: Force Local
-                          print("      ☢️ RESOLUTION FAILED. Enforcing LOCAL (Ours).")
+                          # THE NUCLEAR OPTION:
+                          # If Logic & AI fail, we enforce LOCAL to keep drivers working.
+                          print("      ☢️ FAILED. Enforcing LOCAL (Ours).")
                           new_lines.append("".join(local_blk))
                       
                       modified = True
-                      # CRITICAL: Reset session to prevent 429s on next block
                       reset_session()
                   else:
                       new_lines.append(line)
@@ -253,7 +273,7 @@ jobs:
                   subprocess.run(["git", "add", filepath], check=True)
 
           if __name__ == "__main__":
-              # Read conflicts from file to prevent Argument List Too Long error
+              # Professional IPC: Read from file, not arguments
               if not os.path.exists("conflicts.txt"):
                   print("No conflicts file found.")
                   sys.exit(0)
@@ -262,7 +282,7 @@ jobs:
                   files = [x.strip() for x in f if x.strip()]
               
               if not files:
-                  print("No conflicts to process.")
+                  print("No conflicts detected.")
                   sys.exit(0)
 
               print(f"📋 Processing {len(files)} conflicted files...")
@@ -271,28 +291,30 @@ jobs:
           EOF
 
       # ========================================================
-      # 3. MERGE EXECUTION
+      # PHASE 3: THE "CLEAN-ROOM" MERGE STRATEGY
       # ========================================================
-      - name: 🧬 Merge & Detect
+      - name: 🧬 Execute Strategic Merge
         id: merge
         shell: bash
         run: |
-          # 1. SETUP
+          # 1. Remote Setup
           git remote add upstream "${{ inputs.upstream_repo }}" 2>/dev/null || true
           git fetch upstream "${{ inputs.upstream_branch }}" --no-tags
           
+          # 2. Branch Prep
           TS=$(date +%s)
-          TMP="zenith-$TS"
+          TMP="apex-arch-$TS"
           git checkout -b "$TMP" "origin/${{ inputs.target_branch }}"
           echo "branch=$TMP" >> $GITHUB_OUTPUT
 
-          # 2. PRE-MERGE CLEANUP (The "Dirty Index" Fix)
-          echo "🧹 Unstaging submodules to prevent merge blocks..."
+          # 3. CRITICAL: CLEAN THE INDEX
+          # This prevents "Entry 'toolchains' not uptodate" errors
+          echo "🧹 Sanitizing Git Index (Removing submodules)..."
           git rm -r --cached toolchains > /dev/null 2>&1 || true
-
-          # 3. MERGE
-          echo ">>> STARTING MERGE..."
-          # || true ensures we don't crash, allowing Python to fix conflicts
+          
+          # 4. The Merge
+          echo ">>> STARTING HISTOGRAM MERGE..."
+          # We use '|| true' because we EXPECT conflicts and want to solve them
           git merge "upstream/${{ inputs.upstream_branch }}" \
             --no-commit --no-ff \
             -s ort \
@@ -300,7 +322,7 @@ jobs:
             -X ignore-all-space \
             -X diff-algorithm=histogram || true
           
-          # 4. CAPTURE CONFLICTS
+          # 5. Detection
           git diff --name-only --diff-filter=U > conflicts.txt
           COUNT=$(wc -l < conflicts.txt)
           
@@ -310,13 +332,13 @@ jobs:
              cat conflicts.txt
           else
              echo "found_conflicts=false" >> $GITHUB_OUTPUT
-             echo "✅ Clean Merge."
+             echo "✅ Clean Merge - No intervention needed."
           fi
 
       # ========================================================
-      # 4. ENGAGE APEX BRAIN
+      # PHASE 4: ENGAGE INTELLIGENCE
       # ========================================================
-      - name: 🚑 Engage Apex AI
+      - name: 🚑 Engage Apex Architect
         if: steps.merge.outputs.found_conflicts == 'true'
         run: |
           echo ">>> STARTING AI ENGINE..."
@@ -324,33 +346,36 @@ jobs:
           rm apex_brain.py conflicts.txt
 
       # ========================================================
-      # 5. VERIFY & DEPLOY
+      # PHASE 5: VERIFICATION & DEPLOYMENT
       # ========================================================
-      - name: 🔒 Verify & Push
+      - name: 🔒 Integrity Check & Deploy
         run: |
-          # 1. SAFETY: Remove any hallucinated markers
+          # 1. MARKER SWEEP
+          # Safety Net: Delete lines with markers if AI failed to remove them
           if grep -r "<<<<<<< HEAD" . --exclude-dir=.github; then
-             echo "⚠️ Removing residual markers..."
+             echo "⚠️ Residual markers found. Forcing cleanup..."
              grep -r -l "<<<<<<< HEAD" . | xargs sed -i '/<<<<<<< HEAD/d'
              grep -r -l "=======" . | xargs sed -i '/=======/d'
              grep -r -l ">>>>>>>" . | xargs sed -i '/>>>>>>>/d'
           fi
           
-          # 2. SAFETY: Fail if unmerged files remain
+          # 2. INDEX VERIFICATION
           if [[ -n $(git diff --name-only --diff-filter=U) ]]; then
-             echo "❌ CRITICAL: Unmerged files remain."
+             echo "❌ CRITICAL: Unmerged files remain in index."
              exit 1
           fi
 
-          # 3. COMMIT
+          # 3. RESTORE & COMMIT
           git add .
-          # Ensure toolchains are not committed in a broken state
+          
+          # CRITICAL: Restore toolchains to the index state (Reset)
+          # This ensures we don't commit the 'deletion' of the toolchains
           git reset HEAD toolchains > /dev/null 2>&1 || true
           
           if git diff-index --quiet HEAD --; then
              echo "⚠️ No changes to commit."
           else
-             git commit -m "Apex Zenith: Auto-Merge (${{ inputs.ai_model }})"
+             git commit -m "Apex Architect: Auto-Merge (${{ inputs.ai_model }})"
              
              TARGET="${{ inputs.target_branch }}"
              BRANCH="${{ steps.merge.outputs.branch }}"
@@ -363,21 +388,21 @@ jobs:
                    git push origin --delete "$BRANCH"
                    exit 0
                 fi
-                echo "   🔄 Push retry..."
+                echo "   🔄 Push conflict. Retrying in 5s..."
                 sleep 5
              done
              exit 1
           fi
 
       # ========================================================
-      # 6. REPORTING
+      # PHASE 6: REPORTING
       # ========================================================
       - name: 📝 Failure Report
         if: failure()
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          title: "❌ Apex Zenith Failed"
-          body: "Manual Fix Required on branch `${{ steps.merge.outputs.branch }}`."
+          title: "❌ Apex Architect Failed"
+          body: "The workflow encountered an unrecoverable state on branch `${{ steps.merge.outputs.branch }}`."
           branch: ${{ steps.merge.outputs.branch }}
           base: ${{ inputs.target_branch }}
