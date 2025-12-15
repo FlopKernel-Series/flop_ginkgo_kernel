@@ -16,7 +16,6 @@ on:
         required: true
         default: 'floppy-new'
       
-      # --- AI CONFIGURATION ---
       ai_provider:
         description: 'AI Provider'
         required: true
@@ -41,7 +40,7 @@ permissions:
   pull-requests: write
 
 jobs:
-  titanium_agent:
+  titanium_singularity:
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -51,7 +50,7 @@ jobs:
 
     steps:
       # ========================================================
-      # 1. ENVIRONMENT & CHECKOUT
+      # 1. HARDENED BOOTSTRAP
       # ========================================================
       - name: 🛡️ Harden Environment
         run: |
@@ -68,42 +67,38 @@ jobs:
       - name: ⚙️ Configure Git
         run: |
           git config --global user.name "Apex-Titanium"
-          git config --global user.email "bot@apex-automation.ai"
+          git config --global user.email "singularity@apex-ai.org"
           git config merge.renameLimit 999999
           
-          # BINARY GUARD: Protect kernel blobs
+          # BINARY GUARD
           echo "* -text" > .gitattributes
           for ext in png dtb gz ko o bpf zip jpg bmp iso so a; do
             echo "*.$ext binary" >> .gitattributes
           done
 
       # ========================================================
-      # 2. INJECT TITANIUM BRAIN (ULTIMATE ENGINE)
+      # 2. INJECT SINGULARITY ENGINE (BRAIN)
       # ========================================================
-      - name: 🧠 Inject Titanium Brain
+      - name: 🧠 Inject Singularity Engine
         run: |
-          # ESCAPED FOR YAML: We use __backtick__ placeholders
-          cat << 'EOF' > agent_brain.py
+          # ESCAPED FOR YAML WRAPPER
+          cat << 'EOF' > singularity.py
           #!/usr/bin/env python3
-          import sys, os, re, requests, time, subprocess, random
+          import sys, os, re, requests, time, random, json
           from datetime import datetime
 
-          # --- CONFIGURATION ---
+          # --- CONFIG ---
           sys.stdout.reconfigure(line_buffering=True)
-          
           PROVIDER = os.environ.get("AI_PROVIDER", "gemini")
           API_KEY = os.environ.get("AI_KEY", "").strip()
           REQUESTED_MODEL = os.environ.get("AI_MODEL", "gemini-2.5-flash")
           
-          # --- SAFETY TUNING ---
-          CONTEXT_LINES = 20       # Strict 20 Lines
-          REQUEST_DELAY = 12       # 12s = 5 RPM (Safe Zone)
-          MAX_BLOCK_SIZE = 200     # Token Saver
-          MAX_RETRIES = 3          # Attempts per block
+          # --- TUNING ---
+          CONTEXT_LINES = 20
+          MAX_RETRIES = 4          # Increased for persistence
+          MAX_BLOCK_SIZE = 300     # Increased for big Makefile chunks
 
-          # --- LOGGING ---
-          REPORT = [f"# 🛡️ Titanium v20.0 Report ({datetime.now().strftime('%Y-%m-%d %H:%M')})", ""]
-          STATS = {'total': 0, 'ai': 0, 'skipped': 0, 'failed': 0, 'retries': 0}
+          REPORT = [f"# Titanium Singularity Report ({datetime.now().strftime('%H:%M:%S')})", ""]
 
           def log(msg):
               print(msg)
@@ -116,17 +111,21 @@ jobs:
               text = text.replace("__backtick__", "```")
               return text.strip()
 
+          def is_c_like(filename):
+              """Determines if strict brace checking is safe."""
+              return any(filename.endswith(x) for x in ['.c', '.h', '.cpp', '.hpp', '.dtsi', '.dts', '.java'])
+
           def count_balance(text):
-              # 1. Remove Strings (Double & Single Quotes)
-              clean = re.sub(r'"(?:\.|[^"\])*"', '', text)
-              clean = re.sub(r"'(?:\.|[^'\])*'", '', clean)
-              # 2. Remove Comments
+              """Counts brace balance, ignoring strings and comments."""
+              # CRITICAL FIX: Quadruple escaping in JS ensures correct Regex in Python
+              clean = re.sub(r'"(?:\\.|[^"\\\\])*"', '', text) 
+              clean = re.sub(r"'(?:\\.|[^'\\\\])*'", '', clean)
               clean = re.sub(r'//.*', '', clean)
               clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
               return clean.count('{') - clean.count('}')
 
-          def execute_api_call(model, prompt, retry_count=0):
-              """Robust API Caller with 429 Self-Healing"""
+          def execute_request(model, prompt, attempt=1):
+              """Executes API call with EXPONENTIAL BACKOFF."""
               if PROVIDER == "gemini":
                   url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={API_KEY}"
                   headers = {'Content-Type': 'application/json'}
@@ -136,76 +135,46 @@ jobs:
                       resp = requests.post(url, headers=headers, json=data, timeout=60)
                       
                       if resp.status_code == 200:
-                          time.sleep(REQUEST_DELAY) 
                           try:
                               return clean_ai_output(resp.json()['candidates'][0]['content']['parts'][0]['text'])
                           except: return None
                       
                       elif resp.status_code == 429:
-                          if retry_count == 0:
-                              log(f"    🛑 Rate Limit (429). Self-Healing (60s)...")
-                              time.sleep(60)
-                              STATS['retries'] += 1
-                              return execute_api_call(model, prompt, retry_count=1) # Retry Once
+                          # EXPONENTIAL BACKOFF: 10s, 20s, 40s, 80s...
+                          wait_time = (2 ** attempt) * 10 + random.uniform(1, 5)
+                          log(f"    🛑 429 Rate Limit. Cooling {wait_time:.1f}s (Attempt {attempt})...")
+                          time.sleep(wait_time)
+                          if attempt < MAX_RETRIES:
+                              return execute_request(model, prompt, attempt + 1)
                           else:
-                              log("    ❌ Rate Limit Persisted.")
-                              return "RATE_LIMIT"
+                              return "RATE_LIMIT_EXHAUSTED"
                               
                       elif resp.status_code == 404:
                           return "MODEL_NOT_FOUND"
                       else:
-                          log(f"    ❌ API Error: {resp.status_code}")
+                          log(f"    ❌ API Error {resp.status_code}")
                           return None
                   except Exception as e:
                       log(f"    ⚠️ Network: {e}")
                       return None
-
-              elif PROVIDER == "openai":
-                  url = "https://api.openai.com/v1/chat/completions"
-                  headers = {"Authorization": f"Bearer {API_KEY}"}
-                  data = {"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.2}
-                  try:
-                      resp = requests.post(url, json=data, headers=headers, timeout=60)
-                      if resp.status_code == 200:
-                          return clean_ai_output(resp.json()['choices'][0]['message']['content'])
-                  except: pass
               return None
 
-          def ask_ai_with_tri_fallback(prompt):
-              # 1. Primary Model (User Requested)
-              res = execute_api_call(REQUESTED_MODEL, prompt)
-              if res and res not in ["MODEL_NOT_FOUND", "RATE_LIMIT"]: return res
-              if res == "RATE_LIMIT": return None 
-
-              # 2. Fallback A: Gemini 2.0 Flash Exp (Fast/Smart)
-              if PROVIDER == "gemini":
-                  log("    🔄 Fallback A: gemini-2.0-flash-exp")
-                  res = execute_api_call("gemini-2.0-flash-exp", prompt)
-                  if res and res not in ["MODEL_NOT_FOUND", "RATE_LIMIT"]: return res
-
-                  # 3. Fallback B: Gemini 1.5 Flash (Stable/Old)
-                  log("    🔄 Fallback B: gemini-1.5-flash")
-                  res = execute_api_call("gemini-1.5-flash", prompt)
-                  if res and res not in ["MODEL_NOT_FOUND", "RATE_LIMIT"]: return res
-
-              return None
-
-          def solve_conflict_block(local, remote, pre, post, filename):
-              STATS['total'] += 1
-              
-              # Safety: Huge Block Cap
-              block_len = len(local.splitlines()) + len(remote.splitlines())
-              if block_len > MAX_BLOCK_SIZE:
-                  STATS['skipped'] += 1
-                  log(f"    ⚠️ [SKIP] Huge Block ({block_len} lines).")
+          def solve_conflict(local, remote, pre, post, filename):
+              # 1. Skip if huge (Token Safety)
+              if len(local) + len(remote) > MAX_BLOCK_SIZE * 50: # approx chars
+                  log("    ⚠️ Block too large. Skipping.")
                   return local
 
-              log(f"    🧠 [AI] Thinking...")
-              prompt = f"""
-              TASK: Merge C Code.
-              FILE: {filename}
+              # 2. Construct Prompt
+              log("    🧠 Singularity AI: Analyzing...")
               
-              PRE_CONTEXT:
+              file_type_hint = "C/C++ Code" if is_c_like(filename) else "Text/Config/Makefile"
+              
+              prompt = f"""
+              ROLE: Senior Linux Kernel Architect.
+              TASK: Merge conflict in {filename} ({file_type_hint}).
+              
+              CONTEXT_ABOVE:
               {pre}
               
               <<<<<<< LOCAL
@@ -214,32 +183,37 @@ jobs:
               {remote}
               >>>>>>> REMOTE
               
-              POST_CONTEXT:
+              CONTEXT_BELOW:
               {post}
               
-              INSTRUCTIONS:
-              1. Return ONLY the valid merged code.
-              2. Keep LOCAL driver logic + REMOTE core updates.
-              3. NO Markdown. NO Markers.
+              RULES:
+              1. Return ONLY the valid merged content.
+              2. Remove all conflict markers.
+              3. NO Markdown fences. NO Explanations.
+              4. If this is a Makefile/Kconfig, preserve logic from both sides intelligently.
               """
-              
-              for i in range(MAX_RETRIES):
-                  sol = ask_ai_with_tri_fallback(prompt)
-                  if sol:
-                      # A. Hallucination Check
-                      if "<<<<" in sol or "====" in sol: continue
-                      
-                      # B. Smart Brace Check
-                      if count_balance(sol) != 0 and count_balance(local) == 0:
-                          # Only reject if we broke previously balanced code
-                          log("    ⚠️ Brace Imbalance detected in AI output. Retrying...")
-                          continue 
 
-                      STATS['ai'] += 1
-                      return sol
+              solution = execute_request(REQUESTED_MODEL, prompt)
               
-              STATS['failed'] += 1
-              log("    ☢️ [FAIL] Keeping LOCAL.")
+              # 3. Fallback Logic
+              if not solution or solution == "RATE_LIMIT_EXHAUSTED":
+                  log("    ⚠️ Primary model failed/exhausted. Trying fallback (Gemini 1.5 Flash)...")
+                  solution = execute_request("gemini-1.5-flash", prompt)
+
+              if solution and solution not in ["RATE_LIMIT_EXHAUSTED", "MODEL_NOT_FOUND"]:
+                  # 4. Validation
+                  if "<<<<<<<" in solution: 
+                      log("    ❌ AI hallucinated markers.")
+                      return None
+                  
+                  if is_c_like(filename):
+                      if count_balance(solution) != 0 and count_balance(local) == 0:
+                          log("    ❌ Brace imbalance detected.")
+                          return None
+                  
+                  return solution
+              
+              log("    ☢️ Resolution failed. Keeping LOCAL.")
               return local
 
           def process_file(filepath):
@@ -256,10 +230,11 @@ jobs:
                   if line.startswith('<<<<<<<'):
                       start = i
                       
-                      # Context: Strictly 20 Lines
+                      # Context: 20 Lines
                       pre_ctx = "".join(lines[max(0, start-CONTEXT_LINES):start])
                       
-                      local_blk, remote_blk = [], []
+                      local_blk = []
+                      remote_blk = []
                       mode = "local"
                       i += 1
                       while i < len(lines):
@@ -270,12 +245,12 @@ jobs:
                               else: remote_blk.append(lines[i])
                           i += 1
                       
-                      # Context: Strictly 20 Lines
                       post_ctx = "".join(lines[i+1:min(len(lines), i+1+CONTEXT_LINES)])
                       
-                      log(f"🔎 Conflict: {filepath} (Line {start})")
-                      resolved = solve_conflict_block("".join(local_blk), "".join(remote_blk), pre_ctx, post_ctx, filepath)
-                      new_lines.append(resolved + "\n")
+                      log(f"🔎 Conflict: {filepath} (Line {start+1})")
+                      resolved = solve_conflict("".join(local_blk), "".join(remote_blk), pre_ctx, post_ctx, filepath)
+                      new_lines.append(resolved if resolved else "".join(local_blk)) # Fallback to local if None
+                      new_lines.append("\n") # Safety newline
                       modified = True
                   else:
                       new_lines.append(line)
@@ -286,36 +261,35 @@ jobs:
                   subprocess.run(["git", "add", filepath], check=True)
 
           if __name__ == "__main__":
-              files = sys.argv[1:]
-              if files:
-                  log(f"📋 Processing {len(files)} files...")
-                  for f in files:
-                      if os.path.exists(f): process_file(f)
-                  
-                  # Write Report
-                  REPORT.append("")
-                  REPORT.append("## Statistics")
-                  REPORT.append(f"- **Total:** {STATS['total']}")
-                  REPORT.append(f"- **AI Fixed:** {STATS['ai']}")
-                  REPORT.append(f"- **Failed:** {STATS['failed']}")
-                  REPORT.append(f"- **429 Retries:** {STATS['retries']}")
-                  
-                  with open("TITANIUM_REPORT.md", "w") as f: f.write("\n".join(REPORT))
+              # IPC: Read from file list to avoid ARG_MAX issues
+              if not os.path.exists("titanium_conflicts.txt"): sys.exit(0)
+              
+              with open("titanium_conflicts.txt", "r") as f:
+                  files = [x.strip() for x in f if x.strip()]
+              
+              log(f"📋 Processing {len(files)} conflicts...")
+              for f in files:
+                  if os.path.exists(f): 
+                      process_file(f)
+                      time.sleep(1) # Gentle base pacing
+
+              with open("TITANIUM_REPORT.md", "w") as f: f.write("\n".join(REPORT))
           EOF
           
-          sed -i 's/__backtick__/```/g' agent_brain.py
+          # Final Cleanup
+          sed -i 's/__backtick__/```/g' singularity.py
 
       # ========================================================
-      # 3. MERGE (HISTOGRAM)
+      # 3. MERGE (HISTOGRAM STRATEGY)
       # ========================================================
-      - name: 🧬 Merge (Smart Strategy)
+      - name: 🧬 Merge & Detect
         id: merge_step
         run: |
           git remote add upstream "${{ inputs.upstream_repo }}" 2>/dev/null || true
           git fetch upstream "${{ inputs.upstream_branch }}" --no-tags --prune
 
           TS=$(date +%s)
-          TMP="titanium-$TS"
+          TMP="singularity-$TS"
           git checkout -b "$TMP" "origin/${{ inputs.target_branch }}"
           echo "tmp_branch=$TMP" >> $GITHUB_OUTPUT
 
@@ -326,49 +300,46 @@ jobs:
             -X find-renames=50% \
             -X ignore-all-space \
             -X diff-algorithm=histogram || true
+          
+          # GENERATE CONFLICT LIST
+          git diff --name-only --diff-filter=U > titanium_conflicts.txt
+          COUNT=$(wc -l < titanium_conflicts.txt)
+          echo "conflict_count=$COUNT" >> $GITHUB_OUTPUT
 
       # ========================================================
-      # 4. RUN TITANIUM AGENT
+      # 4. EXECUTE SINGULARITY
       # ========================================================
-      - name: 🚑 Run Titanium Agent
+      - name: 🚑 Run Singularity
+        if: steps.merge_step.outputs.conflict_count > 0
         run: |
-          CONFLICTS=$(git diff --name-only --diff-filter=U)
-          if [ ! -z "$CONFLICTS" ]; then
-             echo "Detected Conflicts: $CONFLICTS"
-             python3 agent_brain.py $CONFLICTS
-          else
-             echo "No text conflicts detected."
-          fi
-          rm agent_brain.py
+          echo "Detected ${{ steps.merge_step.outputs.conflict_count }} conflicts."
+          python3 singularity.py
 
       # ========================================================
-      # 5. REPORTING
+      # 5. VERIFY & DEPLOY
       # ========================================================
-      - name: 📤 Upload Report
+      - name: 📤 Report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: titanium-report
+          name: singularity-report
           path: TITANIUM_REPORT.md
 
-      # ========================================================
-      # 6. VERIFY & DEPLOY
-      # ========================================================
-      - name: 🔍 Verify & Deploy
+      - name: 🔍 Verify & Push
         run: |
-          # A. Unmerged Check
+          # 1. Unmerged check
           if [[ -n $(git diff --name-only --diff-filter=U) ]]; then
-             echo "❌ CRITICAL: Unmerged files remain."
+             echo "❌ Unmerged files remain."
              exit 1
           fi
           
-          # B. Marker Check
+          # 2. Marker check
           if grep -r "<<<<<<< HEAD" . --exclude-dir=.github; then
-             echo "❌ CRITICAL: Conflict markers found."
+             echo "❌ Conflict markers found."
              exit 1
           fi
 
-          # C. Commit & Push
+          # 3. Commit
           git rm -r --cached toolchains > /dev/null 2>&1 || true
           git add .
           git reset HEAD toolchains > /dev/null 2>&1 || true
@@ -376,7 +347,7 @@ jobs:
           if git diff-index --quiet HEAD --; then
              echo "⚠️ No changes."
           else
-             git commit -m "Titanium Ultimate: Auto-Merge (${{ inputs.ai_model }})"
+             git commit -m "Singularity: Auto-Merge (${{ inputs.ai_model }})"
              
              TMP="${{ steps.merge_step.outputs.tmp_branch }}"
              TARGET="${{ inputs.target_branch }}"
@@ -392,9 +363,9 @@ jobs:
           fi
 
       # ========================================================
-      # 7. FAIL SAFE
+      # 6. FAIL SAFE
       # ========================================================
-      - name: 🚨 Emergency Commit
+      - name: 🚨 Emergency Protocol
         if: failure()
         run: |
           echo "⚠️ Workflow Failed. Saving WIP..."
@@ -406,14 +377,14 @@ jobs:
           TMP="${{ steps.merge_step.outputs.tmp_branch }}"
           git push origin "$TMP" || true
 
-      - name: 📝 Create Failure Report
+      - name: 📝 Failure PR
         if: failure()
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          title: "❌ Titanium Merge Failed"
+          title: "❌ Singularity Merge Failed"
           body: |
-            Manual Fix Needed.
+            Manual Intervention Required.
             Branch: `${{ steps.merge_step.outputs.tmp_branch }}`
           branch: ${{ steps.merge_step.outputs.tmp_branch }}
           base: ${{ inputs.target_branch }}
