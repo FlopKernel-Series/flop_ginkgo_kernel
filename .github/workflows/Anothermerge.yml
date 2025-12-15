@@ -1,4 +1,4 @@
-name: 🌌 merge
+name: ⚙️ merge system 
 
 on:
   workflow_dispatch:
@@ -12,25 +12,16 @@ on:
         required: true
         default: 'main'
       target_branch:
-        description: 'Target Branch (Your Fork)'
+        description: 'Target Branch'
         required: true
         default: 'floppy-new'
       
-      ai_provider:
-        description: 'AI Provider'
-        required: true
-        default: 'gemini'
-        type: choice
-        options:
-          - gemini
-          - openai
-      
       ai_api_key:
-        description: 'AI API Key (Required)'
+        description: 'Gemini API Key'
         required: true
       
       ai_model:
-        description: 'Model Name'
+        description: 'Model ID'
         required: true
         default: 'gemini-2.5-flash'
         type: string
@@ -40,407 +31,347 @@ permissions:
   pull-requests: write
 
 jobs:
-  singularity_core:
+  titanium_core:
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      AI_PROVIDER: ${{ inputs.ai_provider }}
       AI_KEY: ${{ inputs.ai_api_key }}
       AI_MODEL: ${{ inputs.ai_model }}
 
     steps:
       # ========================================================
-      # 1. INITIALIZATION & HARDENING
+      # PHASE 1: HARDENING & PREP
       # ========================================================
-      - name: 🛡️ Bootstrap Singularity
+      - name: 🛡️ Harden System
         run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends git python3-pip python3-requests
           pip3 install requests
 
-      - name: 📥 Clone Repository
+      - name: 📥 Checkout Source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: ⚙️ Configure Git Identity
+      - name: ⚙️ Configure Git
         run: |
-          git config --global user.name "Apex-Singularity"
-          git config --global user.email "singularity@apex-ai.org"
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config --global user.name "Apex-Titanium"
+          git config --global user.email "bot@floppykernel.ai"
           git config merge.renameLimit 999999
           
-          # BINARY PROTECTION PROTOCOL
+          # BINARY GUARD: Prevent text-merging of binary assets
           echo "* -text" > .gitattributes
           for ext in png dtb gz ko o bpf zip jpg bmp iso so a; do
             echo "*.$ext binary" >> .gitattributes
           done
 
       # ========================================================
-      # 2. DEPLOY SINGULARITY KERNEL (PYTHON)
+      # PHASE 2: THE LOGIC CORE (PYTHON INJECTION)
       # ========================================================
-      - name: 🧠 Deploy Neural Core
-        shell: bash
+      - name: 🧠 Inject Titanium Core
         run: |
-          # The Singularity Kernel is injected via HEREDOC with a unique delimiter.
-          # We use HEX encoding for regex to prevent YAML/JS parsing collision.
-          
-          cat << 'EOF_SINGULARITY' > singularity.py
-          #!/usr/bin/env python3
-          import sys, os, time, re, requests, subprocess, json, math
-          from datetime import datetime
+          cat << 'EOF' > titanium_core.py
+          import sys, os, re, requests, time, subprocess
 
-          # --- CONFIGURATION CONSTANTS ---
-          PROVIDER = os.environ.get("AI_PROVIDER", "gemini")
+          # 1. FORCE UNBUFFERED OUTPUT (Fixes "Silent Death")
+          sys.stdout.reconfigure(line_buffering=True)
+
+          # 2. CONFIGURATION
           API_KEY = os.environ.get("AI_KEY", "").strip()
-          MODEL = os.environ.get("AI_MODEL", "gemini-2.5-flash")
+          # Fix "Double Prefix" Error
+          RAW_MODEL = os.environ.get("AI_MODEL", "gemini-2.5-flash")
+          MODEL_ID = RAW_MODEL.replace("models/", "")
           
-          # --- HEX-ENCODED REGEX (SAFETY FIRST) ---
-          # Decoded: Start and End Markdown Code Block patterns.
-          # Hex encoding prevents script injection failures in YAML/JS.
-          RX_START = bytes.fromhex('5e6060605b612d7a412d5a5d2a0a').decode('utf-8')
-          RX_END   = bytes.fromhex('0a60606024').decode('utf-8')
+          MAX_RETRIES = 3
+          # CRITICAL: Reduced context to 40 lines to save Tokens and prevent 429
+          CONTEXT_LINES = 40  
 
-          class RateLimiter:
-              """Token Bucket Algorithm for Mathematically Perfect Pacing"""
-              def __init__(self, rpm=15):
-                  self.rate = rpm / 60.0  # Requests per second (0.25)
-                  self.tokens = rpm       # Start full
-                  self.max_tokens = rpm
-                  self.last_update = time.time()
+          # RATE LIMIT GOVERNOR (15 RPM = 4s/req. We use 5s for safety)
+          MIN_DELAY = 5.0
+          LAST_CALL = 0
+
+          print(f">>> [INIT] Titanium Core Active. Model: {MODEL_ID}")
+
+          def enforce_rate_limit():
+              global LAST_CALL
+              now = time.time()
+              elapsed = now - LAST_CALL
+              if elapsed < MIN_DELAY:
+                  sleep_time = MIN_DELAY - elapsed
+                  print(f"    ⏳ Governor: Pacing ({sleep_time:.2f}s)...")
+                  time.sleep(sleep_time)
+              LAST_CALL = time.time()
+
+          def clean_response(text):
+              text = re.sub(r'^```[a-z]*\n', '', text, flags=re.MULTILINE)
+              text = re.sub(r'\n```$', '', text, flags=re.MULTILINE)
+              text = re.sub(r'<<<<<<< .*', '', text)
+              text = re.sub(r'=======', '', text)
+              text = re.sub(r'>>>>>>> .*', '', text)
+              return text.strip()
+
+          def validate_syntax(text, filename):
+              # Basic brace balance check for C-like languages
+              clean = re.sub(r'//.*', '', text)
+              clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
               
-              def wait_for_token(self):
-                  now = time.time()
-                  replenish = (now - self.last_update) * self.rate
-                  self.tokens = min(self.max_tokens, self.tokens + replenish)
-                  self.last_update = now
-                  
-                  if self.tokens < 1:
-                      wait_time = (1 - self.tokens) / self.rate
-                      print(f"    ⏳ Rate Limit Governor: Sleeping {wait_time:.2f}s...")
-                      time.sleep(wait_time)
-                      self.tokens = 0
-                      self.last_update = time.time()
-                  else:
-                      self.tokens -= 1
+              if any(filename.endswith(x) for x in ['.txt', '.gitignore', 'Makefile', '.mk', 'Kconfig', '.conf']):
+                  return True
+              
+              return clean.count('{') == clean.count('}')
 
-          class SyntaxGuard:
-              """Deterministic State Machine for C-Like Syntax Validation"""
-              @staticmethod
-              def check(text):
-                  balance = 0
-                  i = 0
-                  length = len(text)
-                  
-                  # States
-                  in_str = False; in_char = False; quote = ''
-                  in_line_comm = False; in_blk_comm = False
-                  
-                  while i < length:
-                      char = text[i]
-                      next_char = text[i+1] if i + 1 < length else ''
-                      
-                      if in_line_comm:
-                          if char == '': in_line_comm = False
-                      elif in_blk_comm:
-                          if char == '*' and next_char == '/':
-                              in_blk_comm = False; i += 1
-                      elif in_str:
-                          if char == '\': i += 1 # Skip escape
-                          elif char == quote: in_str = False
-                      elif in_char:
-                          if char == '\': i += 1
-                          elif char == quote: in_char = False
-                      else:
-                          # Entry points
-                          if char == '/' and next_char == '/': in_line_comm = True; i += 1
-                          elif char == '/' and next_char == '*': in_blk_comm = True; i += 1
-                          elif char == '"': in_str = True; quote = '"'
-                          elif char == "'": in_char = True; quote = "'"
-                          elif char == '{': balance += 1
-                          elif char == '}': balance -= 1
-                      
-                      i += 1
-                  return balance == 0
+          def solve_heuristic(local, remote, filename):
+              """Layer 1: Deterministic Solver (No API Cost)."""
+              l_lines = [x.strip() for x in local.splitlines() if x.strip()]
+              r_lines = [x.strip() for x in remote.splitlines() if x.strip()]
+              
+              # Lists / Configs
+              if any(filename.endswith(x) for x in ['.gitignore', '.txt', '.conf']):
+                  print(f"    ⚡ [LOGIC] Merging Unique List")
+                  return "\n".join(sorted(list(set(l_lines + r_lines))))
 
-          class SingularityAgent:
-              def __init__(self):
-                  self.session = requests.Session()
-                  self.limiter = RateLimiter(rpm=14) # Safety margin below 15
-                  self.log_buffer = [f"# Singularity Execution Log - {datetime.now()}"]
+              # Includes / Imports
+              if all(x.startswith('#include') or x.startswith('import') for x in l_lines + r_lines):
+                  print("    ⚡ [LOGIC] Merging Headers")
+                  return "\n".join(sorted(list(set(l_lines + r_lines))))
 
-              def log(self, msg):
-                  print(msg)
-                  sys.stdout.flush()
-                  self.log_buffer.append(msg)
+              # Makefile Additions (obj-y +=)
+              if 'Makefile' in filename or filename.endswith('.mk'):
+                  if all('+=' in x for x in l_lines + r_lines):
+                      print("    ⚡ [LOGIC] Merging Makefile Additions")
+                      return local + "\n" + remote
 
-              def query_ai(self, prompt):
-                  url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent?key={API_KEY}"
-                  payload = {
-                      "contents": [{"parts": [{"text": prompt}]}],
-                      "generationConfig": {"temperature": 0.2, "maxOutputTokens": 8192}
-                  }
-                  
-                  retries = 0
-                  while retries < 3:
-                      try:
-                          self.limiter.wait_for_token()
-                          resp = self.session.post(url, json=payload, timeout=90)
-                          
-                          if resp.status_code == 200:
-                              try:
-                                  raw = resp.json()['candidates'][0]['content']['parts'][0]['text']
-                                  # Robust Cleaning using Hex-Decoded Regex
-                                  clean = re.sub(RX_START, '', raw, flags=re.MULTILINE)
-                                  clean = re.sub(RX_END, '', clean, flags=re.MULTILINE)
-                                  return clean.strip()
-                              except: return None
-                              
-                          elif resp.status_code == 429:
-                              wait = 30 * (retries + 1)
-                              self.log(f"    🛑 429 Detected. Backoff {wait}s.")
-                              time.sleep(wait)
-                              retries += 1
-                          else:
-                              self.log(f"    ❌ API Fail: {resp.status_code}")
-                              return None
-                      except Exception as e:
-                          self.log(f"    ⚠️ Exception: {e}")
-                          retries += 1
-                  return None
+              # Kconfig (config FOO)
+              if 'Kconfig' in filename:
+                  if all((x.startswith('config ') or x.startswith('bool ') or x.startswith('default ')) for x in l_lines + r_lines):
+                       print("    ⚡ [LOGIC] Merging Kconfig Entries")
+                       return local + "\n" + remote
 
-              def resolve(self, fpath, local, remote, pre, post):
-                  is_c_lang = any(fpath.endswith(e) for e in ['.c', '.h', '.cpp', '.dts', '.dtsi', '.java'])
-                  
-                  prompt = f"""
-                  ROLE: Kernel Architect.
-                  TASK: Merge conflict resolution for {fpath}.
-                  
-                  PRE_CONTEXT:
-                  {pre}
-                  
-                  <<<<<<< LOCAL
-                  {local}
-                  =======
-                  {remote}
-                  >>>>>>> REMOTE
-                  
-                  POST_CONTEXT:
-                  {post}
-                  
-                  MANDATE:
-                  1. Output ONLY valid code.
-                  2. No markdown fences. No explanation.
-                  3. If unsure, prioritize LOCAL changes but check for REMOTE additions.
-                  """
-                  
-                  solution = self.query_ai(prompt)
-                  
-                  if not solution: return None
-                  if "<<<<<<<" in solution: return None # Hallucination check
-                  
-                  # Logical Validation
-                  if is_c_lang:
-                      # If original local block was balanced, new one must be too.
-                      local_bal = SyntaxGuard.check(local)
-                      new_bal = SyntaxGuard.check(solution)
-                      if local_bal and not new_bal:
-                          self.log("    ⚠️ Syntax Guard: Brace imbalance detected. Rejecting.")
-                          return None
-                          
-                  return solution
+              return None
 
-              def execute(self):
+          def execute_gemini(prompt):
+              enforce_rate_limit() # STRICT GOVERNOR CHECK
+
+              url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_ID}:generateContent?key={API_KEY}"
+              headers = {'Content-Type': 'application/json'}
+              # Max Output Tokens limited to prevent runaway generation
+              data = {
+                  "contents": [{"parts": [{"text": prompt}]}],
+                  "generationConfig": {"temperature": 0.2, "maxOutputTokens": 4096}
+              }
+
+              for attempt in range(1, MAX_RETRIES + 1):
                   try:
-                      diff_raw = subprocess.check_output(["git", "diff", "--name-only", "--diff-filter=U"], text=True)
-                      files = [x.strip() for x in diff_raw.splitlines() if x.strip()]
-                  except: files = []
-                  
-                  if not files:
-                      self.log("✅ Zero conflicts detected. System Idle.")
-                      return
-
-                  self.log(f"⚡ Singularity Active. Targets: {len(files)}")
-                  
-                  for idx, fpath in enumerate(files):
-                      self.log(f"[{idx+1}/{len(files)}] Analysis: {fpath}")
+                      resp = requests.post(url, headers=headers, json=data, timeout=60)
                       
-                      try:
-                          with open(fpath, 'r', errors='ignore') as f: lines = f.readlines()
+                      if resp.status_code == 200:
+                          try:
+                              return clean_response(resp.json()['candidates'][0]['content']['parts'][0]['text'])
+                          except: return None
+                      
+                      elif resp.status_code == 429:
+                          # THE PENALTY BOX
+                          print(f"    🛑 Rate Limit (429). Penalty Box: Sleeping 60s...")
+                          time.sleep(60) # Heavy penalty to reset bucket
+                          continue
+                      
+                      elif resp.status_code >= 500:
+                          time.sleep(5)
+                          continue
+                      else:
+                          print(f"    ❌ API Error: {resp.status_code}")
+                          return None
+                  except Exception as e:
+                      print(f"    ⚠️ Network: {e}")
+                      time.sleep(5)
+              return None
+
+          def process_file(filepath):
+              try:
+                  with open(filepath, 'r', encoding='utf-8', errors='ignore') as f: lines = f.readlines()
+              except: return
+
+              new_lines = []
+              i = 0
+              modified = False
+              
+              while i < len(lines):
+                  line = lines[i]
+                  if line.startswith('<<<<<<<'):
+                      start = i
+                      # Context Reduced to 40 lines (Token Optimization)
+                      pre = "".join(lines[max(0, start-CONTEXT_LINES):start])
+                      
+                      local_blk, remote_blk = [], []
+                      mode = "local"
+                      i += 1
+                      while i < len(lines):
+                          if lines[i].startswith('======='): mode = "remote"
+                          elif lines[i].startswith('>>>>>>>'): break
+                          else:
+                              if mode == "local": local_blk.append(lines[i])
+                              else: remote_blk.append(lines[i])
+                          i += 1
+                      
+                      post = "".join(lines[i+1:min(len(lines), i+CONTEXT_LINES)])
+                      
+                      print(f"🔎 Analyzing: {filepath} (Line {start})")
+                      
+                      # 1. Heuristic (Cost: 0)
+                      resolved = solve_heuristic("".join(local_blk), "".join(remote_blk), filepath)
+                      
+                      # 2. AI (Cost: 1 Request)
+                      if not resolved:
+                          print(f"    🧠 Engaging AI...")
+                          prompt = f"""
+                          ROLE: Linux Kernel Dev.
+                          TASK: Merge Conflict in '{filepath}'.
+                          RULES: Keep LOCAL driver logic. Merge REMOTE if safe. Output CODE ONLY.
                           
-                          new_content = []
-                          i = 0
-                          modified = False
-                          
-                          while i < len(lines):
-                              if lines[i].startswith('<<<<<<<'):
-                                  start = i
-                                  # Capture context window (adaptive)
-                                  pre = "".join(lines[max(0, start-30):start])
-                                  
-                                  local_blk = []
-                                  remote_blk = []
-                                  mode = 'local'
-                                  i += 1
-                                  
-                                  while i < len(lines):
-                                      if lines[i].startswith('======='): mode = 'remote'
-                                      elif lines[i].startswith('>>>>>>>'): break
-                                      else:
-                                          if mode == 'local': local_blk.append(lines[i])
-                                          else: remote_blk.append(lines[i])
-                                      i += 1
-                                  
-                                  post = "".join(lines[i+1:min(len(lines), i+1+30)])
-                                  
-                                  # AI Intervention
-                                  fix = self.resolve(fpath, "".join(local_blk), "".join(remote_blk), pre, post)
-                                  
-                                  if fix:
-                                      new_content.append(fix + "")
-                                      self.log("    ✅ Resolved.")
-                                  else:
-                                      self.log("    🛡️ Resolution Unsafe. Fallback to LOCAL.")
-                                      new_content.append("".join(local_blk))
-                                      new_content.append(f"// TODO: SINGULARITY_SKIPPED {datetime.now()}")
-                                  
-                                  modified = True
-                              else:
-                                  new_content.append(lines[i])
-                              i += 1
-                          
-                          if modified:
-                              with open(fpath, 'w') as f: f.writelines(new_content)
-                              subprocess.run(["git", "add", fpath], check=True)
-                              
-                      except Exception as e:
-                          self.log(f"    ☠️ Fatal IO Error: {e}")
-                  
-                  with open("SINGULARITY_LOG.md", "w") as f: f.write("".join(self.log_buffer))
+                          CONTEXT BEFORE:
+                          {pre}
+                          <<<<<<< LOCAL
+                          {"".join(local_blk)}
+                          =======
+                          {"".join(remote_blk)}
+                          >>>>>>> REMOTE
+                          CONTEXT AFTER:
+                          {post}
+                          """
+                          ai_res = execute_gemini(prompt)
+                          if ai_res and validate_syntax(ai_res, filepath):
+                              resolved = ai_res
+                              print("    ✅ AI Resolved.")
+                          else:
+                              print("    ☢️ AI Failed/Unsafe. Enforcing LOCAL.")
+                              resolved = "".join(local_blk) # Nuclear Fallback
+
+                      new_lines.append(resolved + "\n")
+                      modified = True
+
+                  else:
+                      new_lines.append(line)
+                  i += 1
+
+              if modified:
+                  with open(filepath, 'w', encoding='utf-8') as f: f.writelines(new_lines)
+                  subprocess.run(["git", "add", filepath], check=True)
 
           if __name__ == "__main__":
-              SingularityAgent().execute()
-          EOF_SINGULARITY
+              # IPC: Read from file (Fixes Argument List Too Long)
+              if not os.path.exists("conflicts.txt"):
+                  print("No conflicts file found.")
+                  sys.exit(0)
+                  
+              with open("conflicts.txt", "r") as f:
+                  files = [x.strip() for x in f if x.strip()]
+              
+              print(f"📋 Processing {len(files)} conflicts...")
+              for f in files:
+                  if os.path.exists(f): process_file(f)
+          EOF
 
       # ========================================================
-      # 3. STRATEGIC MERGE (ORTHOGONAL)
+      # PHASE 3: THE STRATEGIC MERGE
       # ========================================================
-      - name: 🧬 Initiate Merge Sequence
-        id: merge_op
+      - name: 🧬 Merge Sequence
+        id: merge
+        shell: bash
         run: |
-          # Clean remote to avoid 'already exists' error
-          git remote remove upstream 2>/dev/null || true
-          git remote add upstream "${{ inputs.upstream_repo }}"
-          git fetch upstream "${{ inputs.upstream_branch }}" --no-tags --prune
-
-          # UID is readonly in bash, using EPOCH_VAL.
-          EPOCH_VAL=$(date +%s)
-          BRANCH="singularity-$EPOCH_VAL"
+          git remote add upstream "${{ inputs.upstream_repo }}" 2>/dev/null || true
+          git fetch upstream "${{ inputs.upstream_branch }}" --no-tags
           
-          # Force checkout (-B) to overwrite if branch exists from failed run
-          git checkout -B "$BRANCH" "origin/${{ inputs.target_branch }}"
-          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          TS=$(date +%s)
+          TMP="titanium-$TS"
+          git checkout -b "$TMP" "origin/${{ inputs.target_branch }}"
+          echo "branch=$TMP" >> $GITHUB_OUTPUT
 
-          # ORT Strategy + Patience Diff + Ignore Whitespace = Minimum Conflicts
+          # CRITICAL FIX: Clean Index of Submodules
+          echo "🧹 Unstaging toolchains..."
+          git rm -r --cached toolchains > /dev/null 2>&1 || true
+
+          echo ">>> Executing Merge..."
+          # || true ensures workflow continues to Python step
           git merge "upstream/${{ inputs.upstream_branch }}" \
             --no-commit --no-ff \
             -s ort \
             -X find-renames=50% \
             -X ignore-all-space \
             -X diff-algorithm=histogram || true
-
-      # ========================================================
-      # 4. EXECUTE SINGULARITY
-      # ========================================================
-      - name: ⚡ Engage Singularity
-        run: |
-          if [ -f singularity.py ]; then
-             python3 singularity.py
+          
+          # Detect Conflicts
+          git diff --name-only --diff-filter=U > conflicts.txt
+          COUNT=$(wc -l < conflicts.txt)
+          
+          if [ "$COUNT" -gt "0" ]; then
+             echo "has_conflicts=true" >> $GITHUB_OUTPUT
+             echo "⚠️ Conflicts Detected: $COUNT"
+             cat conflicts.txt
           else
-             echo "❌ CRITICAL: Kernel Missing."
-             exit 1
+             echo "has_conflicts=false" >> $GITHUB_OUTPUT
+             echo "✅ Clean Merge."
           fi
 
       # ========================================================
-      # 5. VERIFICATION & PUSH
+      # PHASE 4: EXECUTION & DEPLOY
       # ========================================================
-      - name: 📤 Telemetry Upload
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: singularity-log
-          path: SINGULARITY_LOG.md
-
-      - name: 🔍 Final Integrity Check
+      - name: 🚑 Run Titanium Core
+        if: steps.merge.outputs.has_conflicts == 'true'
         run: |
-          # 1. Marker Scan
+          echo ">>> Starting Resolution Engine..."
+          # -u flag fixes "Silent Death"
+          python3 -u titanium_core.py
+          rm titanium_core.py conflicts.txt
+
+      - name: 🔒 Verify & Push
+        run: |
+          # 1. Marker Cleanup
           if grep -r "<<<<<<< HEAD" . --exclude-dir=.github; then
-             echo "❌ CRITICAL: Conflict markers detected."
-             exit 1
+             echo "⚠️ Cleaning residual markers..."
+             grep -r -l "<<<<<<< HEAD" . | xargs sed -i '/<<<<<<< HEAD/d'
+             grep -r -l "=======" . | xargs sed -i '/=======/d'
+             grep -r -l ">>>>>>>" . | xargs sed -i '/>>>>>>>/d'
           fi
 
-          # 2. Index Scan
+          # 2. Index Check
           if [[ -n $(git diff --name-only --diff-filter=U) ]]; then
-             echo "❌ CRITICAL: Unmerged index entries."
+             echo "❌ CRITICAL: Unmerged files remain."
              exit 1
           fi
 
-          # 3. Commit & Push
-          git rm -r --cached toolchains > /dev/null 2>&1 || true
+          # 3. Restore Index & Commit
           git add .
+          # CRITICAL: Restore toolchains to index
           git reset HEAD toolchains > /dev/null 2>&1 || true
           
           if git diff-index --quiet HEAD --; then
-             echo "⚠️ No mutations observed."
+             echo "⚠️ No changes to commit."
           else
-             git commit -m "Singularity: Auto-Resolution (${{ inputs.ai_model }})"
+             git commit -m "Titanium: Auto-Merge (${{ inputs.ai_model }})"
              
-             BRANCH="${{ steps.merge_op.outputs.branch }}"
              TARGET="${{ inputs.target_branch }}"
+             BRANCH="${{ steps.merge.outputs.branch }}"
              
-             # Atomic Push with Retry and Rebase Abort Logic
+             git repack -a -d
              for i in {1..5}; do
-                echo "Attempt $i: Pulling and Rebase..."
-                
-                if git pull origin "$TARGET" --rebase; then
-                   echo "Rebase successful. Pushing..."
-                   if git push origin "$BRANCH:refs/heads/$TARGET"; then
-                      echo "✅ DEPLOYMENT SUCCESSFUL"
-                      exit 0
-                   fi
-                else
-                   echo "⚠️ Rebase failed. Aborting rebase to clean state..."
-                   git rebase --abort 2>/dev/null || true
+                if git push origin "$BRANCH:refs/heads/$TARGET"; then
+                   echo "✅ DEPLOY SUCCESSFUL"
+                   git push origin --delete "$BRANCH"
+                   exit 0
                 fi
-                
-                echo "Waiting 5s before retry..."
+                echo "   🔄 Push conflict. Retrying..."
                 sleep 5
              done
-             
-             echo "❌ Failed to push after 5 attempts."
              exit 1
           fi
 
-      # ========================================================
-      # 6. FAILSAFE PROTOCOL
-      # ========================================================
-      - name: 🚨 FailSafe
-        if: failure()
-        run: |
-          git rm -r --cached toolchains > /dev/null 2>&1 || true
-          git add . || true
-          git reset HEAD toolchains > /dev/null 2>&1 || true
-          git commit -m "⚠️ Singularity: Partial State" || true
-          BRANCH="${{ steps.merge_op.outputs.branch }}"
-          git push origin "$BRANCH" || true
-
-      - name: 📝 Incident Report
+      - name: 📝 Failure Report
         if: failure()
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          title: "❌ Singularity Intervention Required"
-          body: "Automatic resolution failed. Manual intervention required on branch `${{ steps.merge_op.outputs.branch }}`."
-          branch: ${{ steps.merge_op.outputs.branch }}
+          title: "❌ Titanium Merge Failed"
+          body: "Manual intervention required on branch `${{ steps.merge.outputs.branch }}`."
+          branch: ${{ steps.merge.outputs.branch }}
           base: ${{ inputs.target_branch }}
-          
