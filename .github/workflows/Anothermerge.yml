@@ -1,4 +1,4 @@
-name: 💠 merge
+name: 💠 
 
 on:
   workflow_dispatch:
@@ -16,34 +16,18 @@ on:
         required: true
         default: 'floppy-new'
       
-      # --- INTELLIGENCE CREDENTIALS ---
+      # --- CREDENTIALS (Leave empty if not using) ---
       gemini_api_key:
-        description: 'Gemini API Key (Required - Free Tier)'
+        description: 'Gemini API Key (Recommended Free Tier)'
         required: true
       
       deepseek_api_key:
-        description: 'DeepSeek API Key (Optional - Specialist)'
+        description: 'DeepSeek API Key (Coding Specialist)'
         required: false
       
       openai_api_key:
-        description: 'OpenAI API Key (Optional - Generalist)'
+        description: 'OpenAI API Key (Generalist)'
         required: false
-      
-      # --- MODEL SELECTION ---
-      openai_model:
-        description: 'OpenAI Model'
-        required: true
-        default: 'gpt-4o-mini'
-        type: choice
-        options:
-          - gpt-4o-mini     # Fast & Cheap
-          - gpt-4o          # Powerful & Expensive
-      
-      gemini_model:
-        description: 'Gemini Model'
-        required: true
-        default: 'gemini-2.5-flash'
-        type: string
 
 permissions:
   contents: write
@@ -51,109 +35,131 @@ permissions:
 
 jobs:
   # ========================================================
-  # JOB 1: THE GRAND ARBITER (PROBING & RANKING)
+  # JOB 1: THE RECONNAISSANCE PROBE
   # ========================================================
-  arbiter_node:
+  ai_recon:
     runs-on: ubuntu-latest
     outputs:
-      provider_queue: ${{ steps.decide.outputs.queue }}
-      gemini_id: ${{ steps.decide.outputs.gemini_id }}
+      ai_queue: ${{ steps.probe.outputs.queue }}
+      best_gemini: ${{ steps.probe.outputs.gemini_model }}
     steps:
       - name: 🛡️ Init
         run: pip3 install requests
 
-      - name: ⚖️ Run Arbiter Logic
-        id: decide
+      - name: 🕵️ Probe & Rank APIs
+        id: probe
         env:
           KEY_GEMINI: ${{ inputs.gemini_api_key }}
           KEY_DEEPSEEK: ${{ inputs.deepseek_api_key }}
           KEY_OPENAI: ${{ inputs.openai_api_key }}
-          MODEL_OPENAI: ${{ inputs.openai_model }}
         run: |
-          cat << 'EOF' > arbiter.py
+          cat << 'EOF' > recon.py
           import os, requests, re, json
 
-          # --- PROBES ---
           def check_deepseek(key):
               if not key: return False
-              print(">>> Probing DeepSeek...")
+              print(">>> 📡 Probing DeepSeek...")
               try:
                   resp = requests.post(
                       "https://api.deepseek.com/v1/chat/completions",
                       headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                      json={"model": "deepseek-chat", "messages": [{"role":"user", "content":"x"}], "max_tokens": 1},
+                      json={"model": "deepseek-chat", "messages": [{"role":"user", "content":"hi"}], "max_tokens": 1},
                       timeout=5
                   )
-                  if resp.status_code == 200: return True
-                  print(f"    ❌ DeepSeek Error: {resp.status_code}")
+                  if resp.status_code == 200: 
+                      print("    ✅ DeepSeek: Online & Funded.")
+                      return True
+                  if resp.status_code == 402:
+                      print("    ❌ DeepSeek: Out of Credits (402).")
               except: pass
               return False
 
-          def check_openai(key, model):
+          def check_openai(key):
               if not key: return False
-              print(f">>> Probing OpenAI ({model})...")
+              print(">>> 📡 Probing OpenAI...")
               try:
                   resp = requests.post(
                       "https://api.openai.com/v1/chat/completions",
                       headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                      json={"model": model, "messages": [{"role":"user", "content":"x"}], "max_tokens": 1},
-                      timeout=5
-                  )
-                  if resp.status_code == 200: return True
-                  print(f"    ❌ OpenAI Error: {resp.status_code}")
-              except: pass
-              return False
-
-          def get_best_gemini(key):
-              print(">>> Probing Gemini...")
-              best = "gemini-1.5-flash"
-              try:
-                  resp = requests.get(
-                      f"https://generativelanguage.googleapis.com/v1beta/models?key={key}",
+                      json={"model": "gpt-4o-mini", "messages": [{"role":"user", "content":"hi"}], "max_tokens": 1},
                       timeout=5
                   )
                   if resp.status_code == 200:
-                      models = [m['name'].replace("models/", "") for m in resp.json().get('models', []) if "flash" in m['name']]
-                      models.sort(key=lambda x: float(re.search(r'(\d+\.\d+)', x).group(1)), reverse=True)
-                      if models: best = models[0]
+                      print("    ✅ OpenAI: Online & Funded.")
+                      return True
               except: pass
+              return False
+
+          def find_best_gemini(key):
+              print(">>> 📡 Scanning Gemini Models...")
+              # Default fallback
+              best = "gemini-1.5-flash"
+              if not key: return best
+              
+              try:
+                  url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+                  resp = requests.get(url, timeout=8)
+                  if resp.status_code == 200:
+                      data = resp.json().get('models', [])
+                      flash_candidates = []
+                      
+                      for m in data:
+                          name = m['name'].replace("models/", "")
+                          # We specifically look for "flash" because "pro" has a 2 RPM limit on free tier.
+                          # Automation requires Flash (15 RPM).
+                          if "flash" in name and "generateContent" in m.get('supportedGenerationMethods', []):
+                              flash_candidates.append(name)
+                      
+                      # Sort by Version Number (descending)
+                      # e.g., 2.0 > 1.5
+                      def version_parser(n):
+                          match = re.search(r'(\d+\.\d+)', n)
+                          return float(match.group(1)) if match else 0.0
+
+                      flash_candidates.sort(key=version_parser, reverse=True)
+                      
+                      if flash_candidates:
+                          best = flash_candidates[0]
+                          print(f"    ✅ Selected Highest Free Tier: {best}")
+                      else:
+                          print("    ⚠️ No Flash models found, using fallback.")
+              except Exception as e:
+                  print(f"    ⚠️ Discovery Failed ({e}). Using fallback.")
+              
               return best
 
-          # --- MAIN DECISION ENGINE ---
           if __name__ == "__main__":
               k_ds = os.environ.get("KEY_DEEPSEEK")
               k_oa = os.environ.get("KEY_OPENAI")
-              m_oa = os.environ.get("MODEL_OPENAI")
               k_gem = os.environ.get("KEY_GEMINI")
 
-              active_providers = []
+              active_list = []
 
-              # 1. Check DeepSeek (Specialist)
-              if check_deepseek(k_ds): active_providers.append("deepseek")
+              # 1. DEEPSEEK (Top Priority - Coding Specialist)
+              if check_deepseek(k_ds): active_list.append("deepseek")
 
-              # 2. Check OpenAI (Generalist Leader)
-              if check_openai(k_oa, m_oa): active_providers.append("openai")
+              # 2. OPENAI (Second Priority - Stable Generalist)
+              if check_openai(k_oa): active_list.append("openai")
 
-              # 3. Check Gemini (Reliable Fallback)
-              gem_model = get_best_gemini(k_gem)
-              # Gemini is assumed active if key exists, as it's free tier
-              if k_gem: active_providers.append("gemini")
+              # 3. GEMINI (Final Priority - High Quota Free Tier)
+              gem_model = find_best_gemini(k_gem)
+              # Always add Gemini if key exists, as it's the safety net
+              if k_gem: active_list.append("gemini")
 
-              # Serialize list for GitHub Actions
-              queue_str = ",".join(active_providers)
-              print(f"::notice::Intelligence Queue: {queue_str} (Gemini: {gem_model})")
+              queue_str = ",".join(active_list)
+              print(f"::notice::AI Battle Queue: {queue_str} | Gemini Model: {gem_model}")
 
               with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
                   fh.write(f"queue={queue_str}\n")
-                  fh.write(f"gemini_id={gem_model}\n")
+                  fh.write(f"gemini_model={gem_model}\n")
           EOF
-          python3 arbiter.py
+          python3 recon.py
 
   # ========================================================
-  # JOB 2: QUAD-CORE ENGINE
+  # JOB 2: EXECUTION CORE
   # ========================================================
-  quad_core:
-    needs: arbiter_node
+  omni_core:
+    needs: ai_recon
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -161,10 +167,9 @@ jobs:
       KEY_DEEPSEEK: ${{ inputs.deepseek_api_key }}
       KEY_OPENAI: ${{ inputs.openai_api_key }}
       
-      # Dynamic Inputs
-      AI_QUEUE: ${{ needs.arbiter_node.outputs.provider_queue }}
-      MODEL_GEMINI: ${{ needs.arbiter_node.outputs.gemini_id }}
-      MODEL_OPENAI: ${{ inputs.openai_model }}
+      # Dynamic Inputs from Recon
+      AI_QUEUE: ${{ needs.ai_recon.outputs.ai_queue }}
+      MODEL_GEMINI: ${{ needs.ai_recon.outputs.best_gemini }}
 
     steps:
       - name: 🛡️ System Hardening
@@ -181,65 +186,60 @@ jobs:
 
       - name: ⚙️ Configure Git
         run: |
-          git config --global user.name "Apex-QuadCore"
+          git config --global user.name "Apex-Omni"
           git config --global user.email "bot@floppykernel.ai"
           git config merge.renameLimit 999999
           
+          # BINARY GUARD
           echo "* -text" > .gitattributes
           for ext in png dtb gz ko o bpf zip jpg bmp iso so a; do
             echo "*.$ext binary" >> .gitattributes
           done
 
-      - name: 🧠 Inject Quad-Core Engine
+      - name: 🧠 Inject Omni-Core
         run: |
-          cat << 'EOF' > quad_core.py
+          cat << 'EOF' > omni_core.py
           import sys, os, re, requests, time, subprocess
 
           sys.stdout.reconfigure(line_buffering=True)
 
-          # --- CONFIG ---
+          # --- DYNAMIC CONFIG ---
+          QUEUE = os.environ.get("AI_QUEUE", "gemini").split(",")
+          GEMINI_ID = os.environ.get("MODEL_GEMINI", "gemini-1.5-flash")
+          
           KEYS = {
               "gemini": os.environ.get("KEY_GEMINI", "").strip(),
               "deepseek": os.environ.get("KEY_DEEPSEEK", "").strip(),
               "openai": os.environ.get("KEY_OPENAI", "").strip()
           }
-          
-          MODELS = {
-              "gemini": os.environ.get("MODEL_GEMINI", "gemini-1.5-flash"),
-              "openai": os.environ.get("MODEL_OPENAI", "gpt-4o-mini"),
-              "deepseek": "deepseek-chat"
-          }
 
-          # Load Priority Queue (e.g., "deepseek,openai,gemini")
-          QUEUE = os.environ.get("AI_QUEUE", "gemini").split(",")
-          
-          # Governor: 15s to be safe for Gemini Free Tier. 
-          # OpenAI/DeepSeek usually handle faster, but we keep it safe.
-          MIN_DELAY = 12.0
+          # GOVERNOR: 15s delay to protect free tier buckets
+          MIN_DELAY = 15.0
           LAST_REQUEST = 0
 
-          print(f">>> [SYSTEM] Quad-Core Online.")
-          print(f"    - Strategy: Cortex -> { ' -> '.join([q.upper() for q in QUEUE]) } -> Local")
+          print(f">>> [SYSTEM] Omni-Core Online.")
+          print(f"    - Execution Order: {' -> '.join([q.upper() for q in QUEUE])}")
+          print(f"    - Gemini Engine: {GEMINI_ID}")
 
           # ======================================================
-          # CLASS: CORTEX (LOGIC)
+          # CLASS: CORTEX (LOGIC GATE)
           # ======================================================
           class Cortex:
               @staticmethod
-              def solve_heuristics(local, remote, filename):
+              def solve_math(local, remote, filename):
                   l_lines = [x.strip() for x in local.splitlines() if x.strip()]
                   r_lines = [x.strip() for x in remote.splitlines() if x.strip()]
 
-                  # 1. Makefile Version
+                  # 1. Makefile Version Bump (Always Remote)
                   if filename == 'Makefile':
                       if any(x.startswith(('VERSION', 'PATCHLEVEL', 'SUBLEVEL')) for x in r_lines):
-                          print(f"    ⚡ [CORTEX] Version Bump -> REMOTE")
+                          print(f"    ⚡ [CORTEX] Kernel Version Bump -> REMOTE")
                           return remote
                       if all('+=' in x for x in l_lines + r_lines):
                           print(f"    ⚡ [CORTEX] Makefile Append -> MERGE")
                           return local + "\n" + remote
 
-                  # 2. Set Union
+                  # 2. Set Union (Lists, Configs, Includes)
                   if any(filename.endswith(x) for x in ['.gitignore', '.txt', '.conf', '.json']) or \
                      all(x.startswith(('#include', 'import')) for x in l_lines + r_lines):
                       print(f"    ⚡ [CORTEX] Set Union Merge")
@@ -253,13 +253,6 @@ jobs:
                   return None
 
               @staticmethod
-              def check_ghost(local, remote):
-                  if not local.strip() and remote.strip():
-                      print("    👻 [CORTEX] Ghost Block (Deletion) -> Keeping Deleted")
-                      return "" 
-                  return None
-
-              @staticmethod
               def validate(text, filename):
                   clean = re.sub(r'//.*', '', text)
                   clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
@@ -267,9 +260,9 @@ jobs:
                   return clean.count('{') == clean.count('}')
 
           # ======================================================
-          # CLASS: OMNI CLIENT (HANDLES ALL APIS)
+          # CLASS: OMNI AGENT (MULTI-PROVIDER)
           # ======================================================
-          class OmniClient:
+          class OmniAgent:
               @staticmethod
               def clean(text):
                   text = re.sub(r'^```[a-z]*\n', '', text, flags=re.MULTILINE)
@@ -287,55 +280,49 @@ jobs:
 
               @staticmethod
               def call(provider, prompt):
-                  OmniClient.govern()
+                  OmniAgent.govern()
                   key = KEYS.get(provider)
-                  model = MODELS.get(provider)
                   
-                  try:
-                      # --- OPENAI ---
-                      if provider == "openai":
-                          resp = requests.post(
-                              "https://api.openai.com/v1/chat/completions",
-                              headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                              json={"model": model, "messages": [{"role":"user", "content":prompt}], "temperature":0.1},
-                              timeout=60
-                          )
-                          if resp.status_code == 200:
-                              return OmniClient.clean(resp.json()['choices'][0]['message']['content'])
-                          elif resp.status_code in [402, 429]:
-                              print(f"    ⚠️ [OPENAI] Limit Reached ({resp.status_code}).")
-
-                      # --- DEEPSEEK ---
-                      elif provider == "deepseek":
+                  if provider == "deepseek":
+                      try:
                           resp = requests.post(
                               "https://api.deepseek.com/v1/chat/completions",
                               headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                              json={"model": model, "messages": [{"role":"user", "content":prompt}], "temperature":0.1},
+                              json={"model": "deepseek-chat", "messages": [{"role":"user", "content":prompt}], "temperature":0.1},
                               timeout=60
                           )
                           if resp.status_code == 200:
-                              return OmniClient.clean(resp.json()['choices'][0]['message']['content'])
-                          elif resp.status_code in [402, 429]:
-                              print(f"    ⚠️ [DEEPSEEK] Limit Reached ({resp.status_code}).")
+                              return OmniAgent.clean(resp.json()['choices'][0]['message']['content'])
+                      except: pass
 
-                      # --- GEMINI ---
-                      elif provider == "gemini":
-                          url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
-                          for i in range(2): # Retry logic
+                  elif provider == "openai":
+                      try:
+                          resp = requests.post(
+                              "https://api.openai.com/v1/chat/completions",
+                              headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                              json={"model": "gpt-4o-mini", "messages": [{"role":"user", "content":prompt}], "temperature":0.1},
+                              timeout=60
+                          )
+                          if resp.status_code == 200:
+                              return OmniAgent.clean(resp.json()['choices'][0]['message']['content'])
+                      except: pass
+
+                  elif provider == "gemini":
+                      url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_ID}:generateContent?key={key}"
+                      for i in range(2):
+                          try:
                               resp = requests.post(
                                   url, headers={'Content-Type': 'application/json'},
                                   json={"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.2}},
                                   timeout=60
                               )
                               if resp.status_code == 200:
-                                  return OmniClient.clean(resp.json()['candidates'][0]['content']['parts'][0]['text'])
+                                  return OmniAgent.clean(resp.json()['candidates'][0]['content']['parts'][0]['text'])
                               elif resp.status_code == 429:
                                   print("    🛑 [GEMINI] 429. Sleeping 60s...")
                                   time.sleep(60)
                                   continue
-                              break # Break if other error
-                  except Exception as e:
-                      print(f"    ⚠️ [{provider.upper()}] Exception: {e}")
+                          except: time.sleep(5)
                   
                   return None
 
@@ -370,24 +357,30 @@ jobs:
                               else: remote_blk.append(lines[i])
                           i += 1
                       
-                      post = "".join(lines[i+1:min(len(lines), i+40)])[:2000]
+                      post_raw = "".join(lines[i+1:min(len(lines), i+40)])
+                      post = post_raw[:2000]
+                      
                       local_str = "".join(local_blk)
                       remote_str = "".join(remote_blk)
                       
                       print(f"🔎 Conflict: {filepath} (Line {start})")
 
                       # 1. CORTEX
-                      merged = Cortex.solve_heuristics(local_str, remote_str, filepath)
-                      if merged is None: merged = Cortex.check_ghost(local_str, remote_str)
+                      merged = Cortex.solve_math(local_str, remote_str, filepath)
+                      
+                      # 2. GHOST DETECT
+                      if merged is None and not local_str.strip() and remote_str.strip():
+                          print("    👻 [CORTEX] Detected Deletion -> Preserving")
+                          merged = ""
 
-                      # 2. AI CASCADE (Quad-Core)
+                      # 3. AI LOOP (QUEUE)
                       if merged is None:
                           prompt = f"""
-                          ROLE: Linux Kernel Dev.
+                          ROLE: Senior Linux Kernel Dev.
                           TASK: Merge Conflict in '{filepath}'.
                           RULES:
-                          1. **LOCAL SUPREMACY:** My branch (LOCAL) has custom drivers. PRESERVE IT.
-                          2. **ADAPT REMOTE:** If Upstream updated syntax/versions, apply it IF it works with LOCAL.
+                          1. **LOCAL SUPREMACY:** My branch (LOCAL) contains custom drivers. PRESERVE IT.
+                          2. **UPSTREAM:** Merge REMOTE changes only if they are version updates/bugfixes that don't break LOCAL.
                           3. **SYNTAX:** Strict brace balance.
                           
                           CONTEXT BEFORE:
@@ -403,23 +396,23 @@ jobs:
                           OUTPUT: VALID C CODE ONLY.
                           """
                           
-                          # Iterate through Queue (e.g., DeepSeek -> OpenAI -> Gemini)
                           for provider in QUEUE:
                               if provider == "none": continue
-                              print(f"    🧠 Invoking {provider.upper()}...")
-                              merged = OmniClient.call(provider, prompt)
+                              print(f"    🧠 Asking {provider.upper()}...")
+                              ai_out = OmniAgent.call(provider, prompt)
                               
-                              if merged and Cortex.validate(merged, filepath):
+                              if ai_out and Cortex.validate(ai_out, filepath):
                                   print(f"    ✅ Resolved by {provider.upper()}.")
-                                  break # Success, stop cascading
-                              
-                              if merged: print(f"    ⚠️ {provider.upper()} Validation Failed. Trying next...")
+                                  merged = ai_out
+                                  break # Exit Queue Loop
+                              elif ai_out:
+                                  print(f"    ⚠️ {provider.upper()} Validation Failed.")
 
-                      # 3. FINAL DECISION
-                      if merged is not None and Cortex.validate(merged, filepath):
+                      # 4. FINAL FALLBACK
+                      if merged is not None:
                           new_lines.append(merged + "\n")
                       else:
-                          print("    ☢️ FAILED. Enforcing LOCAL.")
+                          print("    ☢️ ALL FAILED. Enforcing LOCAL.")
                           new_lines.append(local_str)
 
                       modified = True
@@ -449,7 +442,7 @@ jobs:
           git fetch upstream "${{ inputs.upstream_branch }}" --no-tags
           
           TS=$(date +%s)
-          TMP="quad-$TS"
+          TMP="omni-$TS"
           git checkout -b "$TMP" "origin/${{ inputs.target_branch }}"
           echo "branch=$TMP" >> $GITHUB_OUTPUT
 
@@ -469,19 +462,19 @@ jobs:
           
           if [ "$COUNT" -gt "0" ]; then
              echo "has_conflicts=true" >> $GITHUB_OUTPUT
-             echo "⚠️ Conflicts Detected: $COUNT"
+             echo "⚠️ Conflicts: $COUNT"
              cat conflicts.txt
           else
              echo "has_conflicts=false" >> $GITHUB_OUTPUT
              echo "✅ Clean Merge."
           fi
 
-      - name: 🚑 Engage Quad-Core
+      - name: 🚑 Engage Omni-Core
         if: steps.merge.outputs.has_conflicts == 'true'
         run: |
-          echo ">>> Starting Quad-Core Engine..."
-          python3 -u quad_core.py
-          rm quad_core.py conflicts.txt
+          echo ">>> Starting Omni-Core..."
+          python3 -u omni_core.py
+          rm omni_core.py conflicts.txt
 
       - name: 🔒 Commit & Push
         run: |
@@ -499,11 +492,11 @@ jobs:
 
           git add .
           git reset HEAD toolchains > /dev/null 2>&1 || true
-
+          
           if git diff-index --quiet HEAD --; then
              echo "⚠️ No changes."
           else
-             git commit -m "Quad-Core: Auto-Merge (${{ inputs.ai_model }})"
+             git commit -m "Omni: Auto-Merge ($MODEL_GEMINI)"
              TARGET="${{ inputs.target_branch }}"
              BRANCH="${{ steps.merge.outputs.branch }}"
              
@@ -519,13 +512,12 @@ jobs:
              exit 1
           fi
 
-      - name: 📝 Failure Report
+      - name: 📝 Report
         if: failure()
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          title: "❌ Quad-Core Merge Failed"
+          title: "❌ Omni-Merge Failed"
           body: "Manual intervention required on branch `${{ steps.merge.outputs.branch }}`."
           branch: ${{ steps.merge.outputs.branch }}
           base: ${{ inputs.target_branch }}
-          
