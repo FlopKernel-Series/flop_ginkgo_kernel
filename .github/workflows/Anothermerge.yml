@@ -60,7 +60,7 @@ jobs:
           git config --global user.email "bot@floppykernel.ai"
           git config merge.renameLimit 999999
           
-          # BINARY GUARD
+          # BINARY GUARD: Prevent text-merging of binary assets
           echo "* -text" > .gitattributes
           for ext in png dtb gz ko o bpf zip jpg bmp iso so a; do
             echo "*.$ext binary" >> .gitattributes
@@ -74,34 +74,37 @@ jobs:
           cat << 'EOF' > titanium_core.py
           import sys, os, re, requests, time, subprocess
 
-          # 1. FORCE UNBUFFERED OUTPUT
+          # FORCE UNBUFFERED LOGS
           sys.stdout.reconfigure(line_buffering=True)
 
-          # 2. CONFIGURATION
+          # --- CONFIGURATION ---
           API_KEY = os.environ.get("AI_KEY", "").strip()
           RAW_MODEL = os.environ.get("AI_MODEL", "gemini-2.5-flash")
           MODEL_ID = RAW_MODEL.replace("models/", "")
-          
-          MAX_RETRIES = 3
-          CONTEXT_LINES = 40  
-          
-          # SAFETY: 6s delay ensures we stay under 10 RPM (Gemini Free Tier limit is 15)
-          MIN_DELAY = 6.0
-          LAST_CALL = 0
 
-          print(f">>> [INIT] Titanium Core Active. Model: {MODEL_ID}")
+          # --- TUNING FOR FREE TIER (15 RPM = 4s/request) ---
+          MIN_REQUEST_INTERVAL = 10.0 # Strict 10s delay between AI calls (extra safety)
+          LAST_REQUEST_TIME = 0       # Tracks last API call time
+
+          MAX_AI_RETRIES_PER_BLOCK = 3 # AI's internal attempts for self-correction
+          MAX_API_BACKOFF_ATTEMPTS = 3 # Network/429 retries
+
+          CONTEXT_LINES = 40          # Token Optimization
+
+          print(f">>> [INIT] Apex Titanium Pro. Model: {MODEL_ID}")
 
           def enforce_rate_limit():
-              global LAST_CALL
+              """Strictly enforces minimum delay between API calls."""
+              global LAST_REQUEST_TIME
               now = time.time()
-              elapsed = now - LAST_CALL
-              if elapsed < MIN_DELAY:
-                  sleep_time = MIN_DELAY - elapsed
-                  # print(f"    ⏳ Governor: Pacing ({sleep_time:.2f}s)...")
+              elapsed = now - LAST_REQUEST_TIME
+              if elapsed < MIN_REQUEST_INTERVAL:
+                  sleep_time = MIN_REQUEST_INTERVAL - elapsed
                   time.sleep(sleep_time)
-              LAST_CALL = time.time()
+              LAST_REQUEST_TIME = time.time()
 
           def clean_response(text):
+              """Sanitizes AI output."""
               text = re.sub(r'^```[a-z]*\n', '', text, flags=re.MULTILINE)
               text = re.sub(r'\n```$', '', text, flags=re.MULTILINE)
               text = re.sub(r'<<<<<<< .*', '', text)
@@ -109,82 +112,161 @@ jobs:
               text = re.sub(r'>>>>>>> .*', '', text)
               return text.strip()
 
+          def remove_comments(text):
+              """Strips C-style comments to reduce token count for context."""
+              text = re.sub(r'//.*', '', text)
+              text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
+              return text
+
           def validate_syntax(text, filename):
-              clean = re.sub(r'//.*', '', text)
-              clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
+              clean = remove_comments(text)
               
-              # Allow non-code files
-              if any(filename.endswith(x) for x in ['.txt', '.gitignore', 'Makefile', '.mk', 'Kconfig', '.conf']):
-                  return True
+              if any(filename.endswith(x) for x in ['.txt', '.gitignore', 'Makefile', '.mk', 'Kconfig', '.conf', '.json']):
+                  return True # Allow non-code files to pass freely
               
-              # DTS/DTSI specific check (They use ; after })
+              # DTS/DTSI specific check (only brace balance)
               if filename.endswith('.dts') or filename.endswith('.dtsi'):
                   return clean.count('{') == clean.count('}')
-              
-              # Standard C check
+
+              # Standard C/C++ Brace Balance
               return clean.count('{') == clean.count('}')
 
+          # --- THE HEURISTIC FIREWALL (0 TOKEN COST) ---
           def solve_heuristic(local, remote, filename):
               l_lines = [x.strip() for x in local.splitlines() if x.strip()]
               r_lines = [x.strip() for x in remote.splitlines() if x.strip()]
               
-              # Lists
-              if any(filename.endswith(x) for x in ['.gitignore', '.txt', '.conf']):
-                  print(f"    ⚡ [LOGIC] Merging Unique List")
+              # 1. Lists / Configs / Gitignore
+              if any(filename.endswith(x) for x in ['.gitignore', '.txt', '.conf', '.json']):
+                  print(f"    ⚡ [HEURISTIC] Merging Unique List (0 Tokens)")
                   return "\n".join(sorted(list(set(l_lines + r_lines))))
 
-              # Headers
+              # 2. Includes / Imports
               if all(x.startswith('#include') or x.startswith('import') for x in l_lines + r_lines):
-                  print("    ⚡ [LOGIC] Merging Headers")
+                  print("    ⚡ [HEURISTIC] Merging Headers (0 Tokens)")
                   return "\n".join(sorted(list(set(l_lines + r_lines))))
 
-              # Makefile
+              # 3. Makefiles (obj-y += foo.o)
               if 'Makefile' in filename or filename.endswith('.mk'):
-                  if all('+=' in x for x in l_lines + r_lines):
-                      print("    ⚡ [LOGIC] Merging Makefile Additions")
+                  if all(re.match(r'^\s*(obj|lib|extra|subdir)-[ym]\s*\+?=.*', x) for x in l_lines + r_lines):
+                      print("    ⚡ [HEURISTIC] Merging Makefile Additions (0 Tokens)")
                       return local + "\n" + remote
+                  # General Makefile lines (e.g., variable assignments, targets)
+                  if all(re.match(r'^\s*([A-Za-z0-9_-]+)\s*(\:|\?|\+|\=).*', x) or x.startswith('\t') for x in l_lines + r_lines):
+                       print("    ⚡ [HEURISTIC] Merging Makefile Union (0 Tokens)")
+                       return "\n".join(list(set(l_lines + r_lines))) # Simple union
+
+              # 4. Kconfig / Defconfig (CONFIG_FOO=y)
+              if 'Kconfig' in filename or 'defconfig' in filename:
+                  if all((x.startswith('config ') or x.startswith('bool ') or x.startswith('default ') or '=' in x or x.startswith('menu ') or x.startswith('endmenu ')) for x in l_lines + r_lines):
+                      print("    ⚡ [HEURISTIC] Merging Kconfig Entries (0 Tokens)")
+                      merged_configs = {}
+                      for line in l_lines + r_lines:
+                          key_match = re.match(r'^\s*(config|menu|endmenu|bool|tristate|default|select|depends on|prompt|help)\s+([A-Za-z0-9_]+).*', line)
+                          if key_match:
+                              key = key_match.group(1).strip() + ':' + key_match.group(2).strip()
+                              merged_configs[key] = line
+                          elif '=' in line:
+                              key = line.split('=')[0].strip()
+                              merged_configs[key] = line
+                          else: # For comments or other unique lines
+                              merged_configs[line] = line
+                      return "\n".join(sorted(merged_configs.values()))
+            
+              # 5. DTS/DTSI Property Additions (simple, non-nested)
+              if filename.endswith('.dts') or filename.endswith('.dtsi'):
+                  # Looking for lines like `property = <val>;` or `node {`
+                  if all(re.match(r'^\s*([a-zA-Z0-9_-]+\s*=\s*<[^>]*>\s*;|[a-zA-Z0-9_-]+\s*=\s*"[^"]*"\s*;|[a-zA-Z0-9_-]+\s*\{)\s*$', x) or x.startswith('#include') for x in l_lines + r_lines):
+                      print("    ⚡ [HEURISTIC] Merging DTS Properties (0 Tokens)")
+                      unique_dts_lines = list(set(l_lines + r_lines))
+                      return "\n".join(sorted(unique_dts_lines, key=lambda x: x.strip()))
+
 
               return None
 
-          def execute_gemini(prompt):
-              enforce_rate_limit()
+          def execute_gemini_request_with_feedback(prompt_base, filename):
+              """
+              AI Engine with Self-Correction and Rate Limit Management.
+              (Mimics merge.yml's 'thinking' strategy)
+              """
+              current_error = ""
+              for attempt in range(1, MAX_AI_RETRIES_PER_BLOCK + 1):
+                  print(f"    🧠 [AI] Attempt {attempt} (for this block)...")
+                  full_prompt = prompt_base
+                  if current_error:
+                      full_prompt += f"\n\nPREVIOUS ATTEMPT ERROR TO FIX: {current_error}"
 
-              url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_ID}:generateContent?key={API_KEY}"
-              headers = {'Content-Type': 'application/json'}
-              data = {
-                  "contents": [{"parts": [{"text": prompt}]}],
-                  "generationConfig": {"temperature": 0.2, "maxOutputTokens": 4096}
-              }
+                  # --- STRICT RATE LIMIT GOVERNOR ---
+                  enforce_rate_limit() 
 
-              for attempt in range(1, MAX_RETRIES + 1):
-                  try:
-                      resp = requests.post(url, headers=headers, json=data, timeout=60)
-                      
-                      if resp.status_code == 200:
-                          try:
-                              return clean_response(resp.json()['candidates'][0]['content']['parts'][0]['text'])
-                          except: return None
-                      
-                      elif resp.status_code == 429:
-                          print(f"    🛑 Rate Limit (429). Penalty Box: Sleeping 60s...")
-                          time.sleep(60)
-                          continue
-                      
-                      elif resp.status_code >= 500:
+                  url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_ID}:generateContent?key={API_KEY}"
+                  headers = {'Content-Type': 'application/json'}
+                  data = {
+                      "contents": [{"parts": [{"text": full_prompt}]}],
+                      "generationConfig": {"temperature": 0.2, "maxOutputTokens": 4096}
+                  }
+
+                  api_retries = 0
+                  while api_retries < MAX_API_BACKOFF_ATTEMPTS:
+                      try:
+                          resp = requests.post(url, headers=headers, json=data, timeout=60)
+                          
+                          if resp.status_code == 200:
+                              try:
+                                  ai_res = clean_response(resp.json()['candidates'][0]['content']['parts'][0]['text'])
+                                  # Validate AI Output
+                                  if "<<<<<<<" in ai_res:
+                                      current_error = "Generated content still contains git conflict markers. Remove them."
+                                      print(f"    ⚠️ AI Self-Correction: {current_error}")
+                                      break # Break API retry loop, go to next AI attempt
+                                  if not validate_syntax(ai_res, filename):
+                                      current_error = "Generated content has unbalanced syntax (braces/parentheses). Fix it."
+                                      print(f"    ⚠️ AI Self-Correction: {current_error}")
+                                      break # Break API retry loop, go to next AI attempt
+                                  return ai_res # Valid solution, return it
+                              except:
+                                  current_error = "Failed to parse AI response (KeyError/JSON issue)."
+                                  print(f"    ⚠️ AI Self-Correction: {current_error}")
+                                  break # Break API retry loop, go to next AI attempt
+                              
+                          elif resp.status_code == 429:
+                              wait = 30 * (api_retries + 1) # Exponential backoff for 429
+                              print(f"    🛑 Rate Limit (429). Sleeping {wait}s...")
+                              time.sleep(wait)
+                              api_retries += 1
+                              current_error = f"API hit rate limit. Waited {wait}s. Try again with more precise merging."
+                              continue # Retry API call
+                          
+                          elif resp.status_code >= 500:
+                              print(f"    ⚠️ API Server Error: {resp.status_code}. Retrying in 5s.")
+                              time.sleep(5)
+                              api_retries += 1
+                              continue
+                          else:
+                              print(f"    ❌ Fatal API Error {resp.status_code}.")
+                              return None # Unrecoverable API error for this block
+
+                      except Exception as e:
+                          print(f"    ⚠️ Network Exception: {e}. Retrying in 5s.")
                           time.sleep(5)
+                          api_retries += 1
                           continue
-                      else:
-                          print(f"    ❌ API Error: {resp.status_code}")
-                          return None
-                  except Exception as e:
-                      print(f"    ⚠️ Network: {e}")
-                      time.sleep(5)
-              return None
+                  
+                  # If we exhausted API retries for this AI attempt
+                  if api_retries == MAX_API_BACKOFF_ATTEMPTS:
+                      print(f"    ☢️ API calls exhausted for this AI attempt. Trying next AI attempt.")
+                      current_error = "API calls to model failed after multiple retries."
+                      # The outer loop will continue with current_error to the AI
+                      
+              print("    ☢️ Max AI Retries Exceeded for this block.")
+              return None # AI failed after all self-correction attempts
 
           def process_file(filepath):
               try:
                   with open(filepath, 'r', encoding='utf-8', errors='ignore') as f: lines = f.readlines()
-              except: return
+              except Exception as e:
+                  print(f"    ❌ File Read Error: {e}")
+                  return
 
               new_lines = []
               i = 0
@@ -194,7 +276,9 @@ jobs:
                   line = lines[i]
                   if line.startswith('<<<<<<<'):
                       start = i
-                      pre = "".join(lines[max(0, start-CONTEXT_LINES):start])
+                      
+                      pre_raw = "".join(lines[max(0, start-CONTEXT_LINES):start])
+                      pre = remove_comments(pre_raw) # Token Optimization
                       
                       local_blk, remote_blk = [], []
                       mode = "local"
@@ -207,45 +291,51 @@ jobs:
                               else: remote_blk.append(lines[i])
                           i += 1
                       
-                      post = "".join(lines[i+1:min(len(lines), i+CONTEXT_LINES)])
+                      post_raw = "".join(lines[i+1:min(len(lines), i+CONTEXT_LINES)])
+                      post = remove_comments(post_raw) # Token Optimization
                       
+                      local_str = "".join(local_blk)
+                      remote_str = "".join(remote_blk)
+
                       print(f"🔎 Analyzing: {filepath} (Line {start})")
                       
-                      # 1. Heuristic
-                      resolved = solve_heuristic("".join(local_blk), "".join(remote_blk), filepath)
+                      # 1. HEURISTIC FIREWALL (0 Token Cost)
+                      resolved = solve_heuristic(local_str, remote_str, filepath)
                       
-                      # 2. AI
+                      # 2. AI ENGINE (With Self-Correction)
                       if not resolved:
-                          print(f"    🧠 Engaging AI...")
-                          prompt = f"""
-                          ROLE: Linux Kernel Dev.
-                          TASK: Merge Conflict in '{filepath}'.
-                          RULES: Keep LOCAL driver logic. Merge REMOTE if safe. Output CODE ONLY.
+                          print(f"    🧠 Engaging AI (with self-correction)...")
+                          prompt_base = f"""
+                          ROLE: Senior Linux Kernel Developer.
+                          TASK: Resolve Git Conflict in '{filepath}'.
+                          
+                          RULES:
+                          1. Output ONLY THE MERGED CODE. No Markdown, no explanations.
+                          2. PRESERVE 'LOCAL' (Downstream/My Driver) Logic - This is the primary directive.
+                          3. MERGE 'REMOTE' (Upstream) changes carefully, only if they don't break LOCAL.
+                          4. Ensure perfect syntax balance for braces {{}} and parentheses ().
                           
                           CONTEXT BEFORE:
                           {pre}
                           <<<<<<< LOCAL
-                          {"".join(local_blk)}
+                          {local_str}
                           =======
-                          {"".join(remote_blk)}
+                          {remote_str}
                           >>>>>>> REMOTE
                           CONTEXT AFTER:
                           {post}
                           """
-                          ai_res = execute_gemini(prompt)
-                          if ai_res and validate_syntax(ai_res, filepath):
-                              resolved = ai_res
+                          resolved = execute_gemini_request_with_feedback(prompt_base, filepath)
+                          
+                          if resolved:
                               print("    ✅ AI Resolved.")
                           else:
                               print("    ☢️ AI Failed/Unsafe. Enforcing LOCAL.")
-                              resolved = "".join(local_blk)
+                              resolved = local_str # Nuclear Fallback
 
                       new_lines.append(resolved + "\n")
                       modified = True
                       
-                      # 3. Cooling (Increased to 6s for safety)
-                      time.sleep(6.0)
-
                   else:
                       new_lines.append(line)
                   i += 1
@@ -255,6 +345,7 @@ jobs:
                   subprocess.run(["git", "add", filepath], check=True)
 
           if __name__ == "__main__":
+              # IPC: Read from file (Fixes Argument List Too Long)
               if not os.path.exists("conflicts.txt"):
                   print("No conflicts file found.")
                   sys.exit(0)
@@ -282,10 +373,12 @@ jobs:
           git checkout -b "$TMP" "origin/${{ inputs.target_branch }}"
           echo "branch=$TMP" >> $GITHUB_OUTPUT
 
+          # CRITICAL FIX: Clean Index of Submodules
           echo "🧹 Unstaging toolchains..."
           git rm -r --cached toolchains > /dev/null 2>&1 || true
 
           echo ">>> Executing Merge..."
+          # || true ensures workflow continues to Python step
           git merge "upstream/${{ inputs.upstream_branch }}" \
             --no-commit --no-ff \
             -s ort \
@@ -293,6 +386,7 @@ jobs:
             -X ignore-all-space \
             -X diff-algorithm=histogram || true
           
+          # Detect Conflicts
           git diff --name-only --diff-filter=U > conflicts.txt
           COUNT=$(wc -l < conflicts.txt)
           
@@ -312,11 +406,14 @@ jobs:
         if: steps.merge.outputs.has_conflicts == 'true'
         run: |
           echo ">>> Starting Resolution Engine..."
+          # -u flag fixes "Silent Death"
           python3 -u titanium_core.py
           rm titanium_core.py conflicts.txt
 
       - name: 🔒 Verify & Push
         run: |
+          # 1. Marker Cleanup
+          
           if grep -r "<<<<<<< HEAD" . --exclude-dir=.github; then
              echo "⚠️ Cleaning residual markers..."
              grep -r -l "<<<<<<< HEAD" . | xargs sed -i '/<<<<<<< HEAD/d'
@@ -324,12 +421,17 @@ jobs:
              grep -r -l ">>>>>>>" . | xargs sed -i '/>>>>>>>/d'
           fi
 
+          # 2. Index Check
+          
           if [[ -n $(git diff --name-only --diff-filter=U) ]]; then
              echo "❌ CRITICAL: Unmerged files remain."
              exit 1
           fi
 
+          # 3. Restore Index & Commit
+          
           git add .
+          # CRITICAL: Restore toolchains to index
           git reset HEAD toolchains > /dev/null 2>&1 || true
           
           if git diff-index --quiet HEAD --; then
