@@ -1,4 +1,4 @@
-name: ⚙️ merge system 
+name: ⚙️ merge 
 
 on:
   workflow_dispatch:
@@ -60,35 +60,33 @@ jobs:
           git config --global user.email "bot@floppykernel.ai"
           git config merge.renameLimit 999999
           
-          # BINARY GUARD: Prevent text-merging of binary assets
+          # BINARY GUARD
           echo "* -text" > .gitattributes
           for ext in png dtb gz ko o bpf zip jpg bmp iso so a; do
             echo "*.$ext binary" >> .gitattributes
           done
 
       # ========================================================
-      # PHASE 2: THE LOGIC CORE (PYTHON INJECTION)
+      # PHASE 2: THE LOGIC CORE
       # ========================================================
       - name: 🧠 Inject Titanium Core
         run: |
           cat << 'EOF' > titanium_core.py
           import sys, os, re, requests, time, subprocess
 
-          # 1. FORCE UNBUFFERED OUTPUT (Fixes "Silent Death")
+          # 1. FORCE UNBUFFERED OUTPUT
           sys.stdout.reconfigure(line_buffering=True)
 
           # 2. CONFIGURATION
           API_KEY = os.environ.get("AI_KEY", "").strip()
-          # Fix "Double Prefix" Error
           RAW_MODEL = os.environ.get("AI_MODEL", "gemini-2.5-flash")
           MODEL_ID = RAW_MODEL.replace("models/", "")
           
           MAX_RETRIES = 3
-          # CRITICAL: Reduced context to 40 lines to save Tokens and prevent 429
           CONTEXT_LINES = 40  
-
-          # RATE LIMIT GOVERNOR (15 RPM = 4s/req. We use 5s for safety)
-          MIN_DELAY = 5.0
+          
+          # SAFETY: 6s delay ensures we stay under 10 RPM (Gemini Free Tier limit is 15)
+          MIN_DELAY = 6.0
           LAST_CALL = 0
 
           print(f">>> [INIT] Titanium Core Active. Model: {MODEL_ID}")
@@ -99,7 +97,7 @@ jobs:
               elapsed = now - LAST_CALL
               if elapsed < MIN_DELAY:
                   sleep_time = MIN_DELAY - elapsed
-                  print(f"    ⏳ Governor: Pacing ({sleep_time:.2f}s)...")
+                  # print(f"    ⏳ Governor: Pacing ({sleep_time:.2f}s)...")
                   time.sleep(sleep_time)
               LAST_CALL = time.time()
 
@@ -112,50 +110,47 @@ jobs:
               return text.strip()
 
           def validate_syntax(text, filename):
-              # Basic brace balance check for C-like languages
               clean = re.sub(r'//.*', '', text)
               clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
               
+              # Allow non-code files
               if any(filename.endswith(x) for x in ['.txt', '.gitignore', 'Makefile', '.mk', 'Kconfig', '.conf']):
                   return True
               
+              # DTS/DTSI specific check (They use ; after })
+              if filename.endswith('.dts') or filename.endswith('.dtsi'):
+                  return clean.count('{') == clean.count('}')
+              
+              # Standard C check
               return clean.count('{') == clean.count('}')
 
           def solve_heuristic(local, remote, filename):
-              """Layer 1: Deterministic Solver (No API Cost)."""
               l_lines = [x.strip() for x in local.splitlines() if x.strip()]
               r_lines = [x.strip() for x in remote.splitlines() if x.strip()]
               
-              # Lists / Configs
+              # Lists
               if any(filename.endswith(x) for x in ['.gitignore', '.txt', '.conf']):
                   print(f"    ⚡ [LOGIC] Merging Unique List")
                   return "\n".join(sorted(list(set(l_lines + r_lines))))
 
-              # Includes / Imports
+              # Headers
               if all(x.startswith('#include') or x.startswith('import') for x in l_lines + r_lines):
                   print("    ⚡ [LOGIC] Merging Headers")
                   return "\n".join(sorted(list(set(l_lines + r_lines))))
 
-              # Makefile Additions (obj-y +=)
+              # Makefile
               if 'Makefile' in filename or filename.endswith('.mk'):
                   if all('+=' in x for x in l_lines + r_lines):
                       print("    ⚡ [LOGIC] Merging Makefile Additions")
                       return local + "\n" + remote
 
-              # Kconfig (config FOO)
-              if 'Kconfig' in filename:
-                  if all((x.startswith('config ') or x.startswith('bool ') or x.startswith('default ')) for x in l_lines + r_lines):
-                       print("    ⚡ [LOGIC] Merging Kconfig Entries")
-                       return local + "\n" + remote
-
               return None
 
           def execute_gemini(prompt):
-              enforce_rate_limit() # STRICT GOVERNOR CHECK
+              enforce_rate_limit()
 
               url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_ID}:generateContent?key={API_KEY}"
               headers = {'Content-Type': 'application/json'}
-              # Max Output Tokens limited to prevent runaway generation
               data = {
                   "contents": [{"parts": [{"text": prompt}]}],
                   "generationConfig": {"temperature": 0.2, "maxOutputTokens": 4096}
@@ -171,9 +166,8 @@ jobs:
                           except: return None
                       
                       elif resp.status_code == 429:
-                          # THE PENALTY BOX
                           print(f"    🛑 Rate Limit (429). Penalty Box: Sleeping 60s...")
-                          time.sleep(60) # Heavy penalty to reset bucket
+                          time.sleep(60)
                           continue
                       
                       elif resp.status_code >= 500:
@@ -200,7 +194,6 @@ jobs:
                   line = lines[i]
                   if line.startswith('<<<<<<<'):
                       start = i
-                      # Context Reduced to 40 lines (Token Optimization)
                       pre = "".join(lines[max(0, start-CONTEXT_LINES):start])
                       
                       local_blk, remote_blk = [], []
@@ -218,10 +211,10 @@ jobs:
                       
                       print(f"🔎 Analyzing: {filepath} (Line {start})")
                       
-                      # 1. Heuristic (Cost: 0)
+                      # 1. Heuristic
                       resolved = solve_heuristic("".join(local_blk), "".join(remote_blk), filepath)
                       
-                      # 2. AI (Cost: 1 Request)
+                      # 2. AI
                       if not resolved:
                           print(f"    🧠 Engaging AI...")
                           prompt = f"""
@@ -245,10 +238,13 @@ jobs:
                               print("    ✅ AI Resolved.")
                           else:
                               print("    ☢️ AI Failed/Unsafe. Enforcing LOCAL.")
-                              resolved = "".join(local_blk) # Nuclear Fallback
+                              resolved = "".join(local_blk)
 
                       new_lines.append(resolved + "\n")
                       modified = True
+                      
+                      # 3. Cooling (Increased to 6s for safety)
+                      time.sleep(6.0)
 
                   else:
                       new_lines.append(line)
@@ -259,7 +255,6 @@ jobs:
                   subprocess.run(["git", "add", filepath], check=True)
 
           if __name__ == "__main__":
-              # IPC: Read from file (Fixes Argument List Too Long)
               if not os.path.exists("conflicts.txt"):
                   print("No conflicts file found.")
                   sys.exit(0)
@@ -287,12 +282,10 @@ jobs:
           git checkout -b "$TMP" "origin/${{ inputs.target_branch }}"
           echo "branch=$TMP" >> $GITHUB_OUTPUT
 
-          # CRITICAL FIX: Clean Index of Submodules
           echo "🧹 Unstaging toolchains..."
           git rm -r --cached toolchains > /dev/null 2>&1 || true
 
           echo ">>> Executing Merge..."
-          # || true ensures workflow continues to Python step
           git merge "upstream/${{ inputs.upstream_branch }}" \
             --no-commit --no-ff \
             -s ort \
@@ -300,7 +293,6 @@ jobs:
             -X ignore-all-space \
             -X diff-algorithm=histogram || true
           
-          # Detect Conflicts
           git diff --name-only --diff-filter=U > conflicts.txt
           COUNT=$(wc -l < conflicts.txt)
           
@@ -320,13 +312,11 @@ jobs:
         if: steps.merge.outputs.has_conflicts == 'true'
         run: |
           echo ">>> Starting Resolution Engine..."
-          # -u flag fixes "Silent Death"
           python3 -u titanium_core.py
           rm titanium_core.py conflicts.txt
 
       - name: 🔒 Verify & Push
         run: |
-          # 1. Marker Cleanup
           if grep -r "<<<<<<< HEAD" . --exclude-dir=.github; then
              echo "⚠️ Cleaning residual markers..."
              grep -r -l "<<<<<<< HEAD" . | xargs sed -i '/<<<<<<< HEAD/d'
@@ -334,15 +324,12 @@ jobs:
              grep -r -l ">>>>>>>" . | xargs sed -i '/>>>>>>>/d'
           fi
 
-          # 2. Index Check
           if [[ -n $(git diff --name-only --diff-filter=U) ]]; then
              echo "❌ CRITICAL: Unmerged files remain."
              exit 1
           fi
 
-          # 3. Restore Index & Commit
           git add .
-          # CRITICAL: Restore toolchains to index
           git reset HEAD toolchains > /dev/null 2>&1 || true
           
           if git diff-index --quiet HEAD --; then
