@@ -15,11 +15,23 @@ on:
         description: 'Target Branch (Your Fork)'
         required: true
         default: 'floppy-new'
-      ai_api_key:
-        description: 'Gemini API Key'
+      
+      # --- AI CONFIGURATION ---
+      ai_provider:
+        description: 'AI Provider'
         required: true
+        default: 'gemini'
+        type: choice
+        options:
+          - gemini
+          - openai
+      
+      ai_api_key:
+        description: 'AI API Key (Required)'
+        required: true
+      
       ai_model:
-        description: 'Model ID'
+        description: 'Model Name'
         required: true
         default: 'gemini-2.5-flash'
         type: string
@@ -29,18 +41,19 @@ permissions:
   pull-requests: write
 
 jobs:
-  titanium_core:
+  titanium_agent:
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      AI_PROVIDER: ${{ inputs.ai_provider }}
       AI_KEY: ${{ inputs.ai_api_key }}
-      MODEL_ID: ${{ inputs.ai_model }}
+      AI_MODEL: ${{ inputs.ai_model }}
 
     steps:
       # ========================================================
-      # PHASE 1: HARDENING & PREPARATION
+      # 1. ENVIRONMENT & CHECKOUT
       # ========================================================
-      - name: 🛡️ System Hardening
+      - name: 🛡️ Harden Environment
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
           sudo apt-get update -qq
@@ -52,149 +65,142 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: ⚙️ Configure Git & Binary Protection
+      - name: ⚙️ Configure Git
         run: |
           git config --global user.name "Apex-Titanium"
-          git config --global user.email "titanium@apex-automation.ai"
+          git config --global user.email "bot@apex-automation.ai"
           git config merge.renameLimit 999999
           
-          # BINARY GUARD: Protects kernel blobs from text merging
+          # BINARY GUARD: Protect kernel blobs
           echo "* -text" > .gitattributes
           for ext in png dtb gz ko o bpf zip jpg bmp iso so a; do
             echo "*.$ext binary" >> .gitattributes
           done
 
       # ========================================================
-      # PHASE 2: INJECT TITANIUM CORE (OBSIDIAN ENGINE)
+      # 2. INJECT TITANIUM BRAIN (ULTIMATE ENGINE)
       # ========================================================
-      - name: 🧠 Inject Titanium Core
+      - name: 🧠 Inject Titanium Brain
         run: |
           # ESCAPED FOR YAML: We use __backtick__ placeholders
-          cat << 'EOF' > titanium_core.py
+          cat << 'EOF' > agent_brain.py
+          #!/usr/bin/env python3
           import sys, os, re, requests, time, subprocess, random
+          from datetime import datetime
 
           # --- CONFIGURATION ---
           sys.stdout.reconfigure(line_buffering=True)
           
+          PROVIDER = os.environ.get("AI_PROVIDER", "gemini")
           API_KEY = os.environ.get("AI_KEY", "").strip()
-          MODEL = os.environ.get("MODEL_ID", "gemini-2.5-flash").replace("models/", "")
+          REQUESTED_MODEL = os.environ.get("AI_MODEL", "gemini-2.5-flash")
           
-          # --- TUNING PARAMETERS ---
-          CONTEXT_LINES = 20       # EXACTLY 20 Lines
-          MAX_RETRIES = 3          # Attempts per file
-          REQUEST_DELAY = 12       # 12s = 5 RPM (Safe)
-          PENALTY_WAIT = 60        # 429 Penalty
-          MAX_BLOCK_SIZE = 200     # Token Safety
+          # --- SAFETY TUNING ---
+          CONTEXT_LINES = 20       # Strict 20 Lines
+          REQUEST_DELAY = 12       # 12s = 5 RPM (Safe Zone)
+          MAX_BLOCK_SIZE = 200     # Token Saver
+          MAX_RETRIES = 3          # Attempts per block
 
-          # --- LOGGER STATS ---
-          REPORT = ["# 🛡️ Apex Titanium v18.0 Report", ""]
-          STATS = {'total': 0, 'heuristic': 0, 'ai': 0, 'failed': 0, 'skipped': 0}
-
-          print(f">>> [INIT] Titanium v18.0 (Obsidian). Model: {MODEL}")
+          # --- LOGGING ---
+          REPORT = [f"# 🛡️ Titanium v20.0 Report ({datetime.now().strftime('%Y-%m-%d %H:%M')})", ""]
+          STATS = {'total': 0, 'ai': 0, 'skipped': 0, 'failed': 0, 'retries': 0}
 
           def log(msg):
               print(msg)
+              sys.stdout.flush()
               REPORT.append(msg.strip())
 
-          def clean_response(text):
-              """Sanitizes AI output."""
+          def clean_ai_output(text):
               text = re.sub(r'^__backtick__[a-z]*\n', '', text, flags=re.MULTILINE)
               text = re.sub(r'\n__backtick__$', '', text, flags=re.MULTILINE)
               text = text.replace("__backtick__", "```")
               return text.strip()
 
-          def get_brace_balance(text):
-              clean = re.sub(r'//.*', '', text)
+          def count_balance(text):
+              # 1. Remove Strings (Double & Single Quotes)
+              clean = re.sub(r'"(?:\.|[^"\])*"', '', text)
+              clean = re.sub(r"'(?:\.|[^'\])*'", '', clean)
+              # 2. Remove Comments
+              clean = re.sub(r'//.*', '', clean)
               clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
               return clean.count('{') - clean.count('}')
 
-          def validate_syntax(ai_code, local_code, filename):
-              # 1. Hallucination Check (Markers)
-              if "<<<<<<<" in ai_code or "=======" in ai_code or ">>>>>>>" in ai_code:
-                  return False
-
-              # 2. Config Bypass
-              if any(filename.endswith(x) for x in ['.txt', '.gitignore', 'Makefile', '.mk', 'Kconfig', '.conf']):
-                  return True 
-              
-              # 3. Unclosed Comments
-              if ai_code.count('/*') != ai_code.count('*/'):
-                  return False
-
-              # 4. Brace Balance
-              local_bal = get_brace_balance(local_code)
-              ai_bal = get_brace_balance(ai_code)
-              if local_bal == 0 and ai_bal != 0:
-                  return False
+          def execute_api_call(model, prompt, retry_count=0):
+              """Robust API Caller with 429 Self-Healing"""
+              if PROVIDER == "gemini":
+                  url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={API_KEY}"
+                  headers = {'Content-Type': 'application/json'}
+                  data = {"contents": [{"parts": [{"text": prompt}]}]}
                   
-              return True
-
-          def solve_heuristic(local, remote, filename):
-              is_config = any(x in filename for x in ['defconfig', 'Kconfig', '.gitignore', '.txt'])
-              if is_config:
-                  l_lines = set(x.strip() for x in local.splitlines() if x.strip())
-                  r_lines = set(x.strip() for x in remote.splitlines() if x.strip())
-                  merged = sorted(list(l_lines.union(r_lines)))
-                  return "\n".join(merged)
-              return None
-
-          def execute_gemini(prompt):
-              url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent?key={API_KEY}"
-              headers = {'Content-Type': 'application/json'}
-              data = {
-                  "contents": [{"parts": [{"text": prompt}]}],
-                  "generationConfig": {"temperature": 0.2, "maxOutputTokens": 8192}
-              }
-
-              for attempt in range(1, MAX_RETRIES + 1):
                   try:
                       resp = requests.post(url, headers=headers, json=data, timeout=60)
                       
                       if resp.status_code == 200:
                           time.sleep(REQUEST_DELAY) 
                           try:
-                              return clean_response(resp.json()['candidates'][0]['content']['parts'][0]['text'])
+                              return clean_ai_output(resp.json()['candidates'][0]['content']['parts'][0]['text'])
                           except: return None
                       
                       elif resp.status_code == 429:
-                          wait = PENALTY_WAIT + random.uniform(1, 10)
-                          print(f"    🛑 Rate Limit (429). Cooling {wait:.1f}s...")
-                          time.sleep(wait)
-                          continue 
-                      
-                      elif resp.status_code >= 500:
-                          time.sleep(10)
-                          continue
-                      
-                      else:
-                          print(f"    ❌ API Error {resp.status_code}")
-                          return None
+                          if retry_count == 0:
+                              log(f"    🛑 Rate Limit (429). Self-Healing (60s)...")
+                              time.sleep(60)
+                              STATS['retries'] += 1
+                              return execute_api_call(model, prompt, retry_count=1) # Retry Once
+                          else:
+                              log("    ❌ Rate Limit Persisted.")
+                              return "RATE_LIMIT"
                               
+                      elif resp.status_code == 404:
+                          return "MODEL_NOT_FOUND"
+                      else:
+                          log(f"    ❌ API Error: {resp.status_code}")
+                          return None
                   except Exception as e:
-                      print(f"    ⚠️ Network: {e}")
-                      time.sleep(10)
-              
+                      log(f"    ⚠️ Network: {e}")
+                      return None
+
+              elif PROVIDER == "openai":
+                  url = "https://api.openai.com/v1/chat/completions"
+                  headers = {"Authorization": f"Bearer {API_KEY}"}
+                  data = {"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.2}
+                  try:
+                      resp = requests.post(url, json=data, headers=headers, timeout=60)
+                      if resp.status_code == 200:
+                          return clean_ai_output(resp.json()['choices'][0]['message']['content'])
+                  except: pass
+              return None
+
+          def ask_ai_with_tri_fallback(prompt):
+              # 1. Primary Model (User Requested)
+              res = execute_api_call(REQUESTED_MODEL, prompt)
+              if res and res not in ["MODEL_NOT_FOUND", "RATE_LIMIT"]: return res
+              if res == "RATE_LIMIT": return None 
+
+              # 2. Fallback A: Gemini 2.0 Flash Exp (Fast/Smart)
+              if PROVIDER == "gemini":
+                  log("    🔄 Fallback A: gemini-2.0-flash-exp")
+                  res = execute_api_call("gemini-2.0-flash-exp", prompt)
+                  if res and res not in ["MODEL_NOT_FOUND", "RATE_LIMIT"]: return res
+
+                  # 3. Fallback B: Gemini 1.5 Flash (Stable/Old)
+                  log("    🔄 Fallback B: gemini-1.5-flash")
+                  res = execute_api_call("gemini-1.5-flash", prompt)
+                  if res and res not in ["MODEL_NOT_FOUND", "RATE_LIMIT"]: return res
+
               return None
 
           def solve_conflict_block(local, remote, pre, post, filename):
               STATS['total'] += 1
               
-              # 1. Heuristic Bypass
-              heuristic = solve_heuristic(local, remote, filename)
-              if heuristic: 
-                  STATS['heuristic'] += 1
-                  log(f"    ⚡ [HEURISTIC] {filename}")
-                  return heuristic
-
-              # 2. Safety Cap
+              # Safety: Huge Block Cap
               block_len = len(local.splitlines()) + len(remote.splitlines())
               if block_len > MAX_BLOCK_SIZE:
                   STATS['skipped'] += 1
                   log(f"    ⚠️ [SKIP] Huge Block ({block_len} lines).")
                   return local
 
-              # 3. AI Resolution
-              print(f"    🧠 [AI] Thinking...")
+              log(f"    🧠 [AI] Thinking...")
               prompt = f"""
               TASK: Merge C Code.
               FILE: {filename}
@@ -217,14 +223,23 @@ jobs:
               3. NO Markdown. NO Markers.
               """
               
-              ai_sol = execute_gemini(prompt)
-              
-              if ai_sol and validate_syntax(ai_sol, local, filename):
-                  STATS['ai'] += 1
-                  return ai_sol
+              for i in range(MAX_RETRIES):
+                  sol = ask_ai_with_tri_fallback(prompt)
+                  if sol:
+                      # A. Hallucination Check
+                      if "<<<<" in sol or "====" in sol: continue
+                      
+                      # B. Smart Brace Check
+                      if count_balance(sol) != 0 and count_balance(local) == 0:
+                          # Only reject if we broke previously balanced code
+                          log("    ⚠️ Brace Imbalance detected in AI output. Retrying...")
+                          continue 
+
+                      STATS['ai'] += 1
+                      return sol
               
               STATS['failed'] += 1
-              log(f"    ☢️ [FAIL] Validation/AI Error. Keeping LOCAL.")
+              log("    ☢️ [FAIL] Keeping LOCAL.")
               return local
 
           def process_file(filepath):
@@ -255,6 +270,7 @@ jobs:
                               else: remote_blk.append(lines[i])
                           i += 1
                       
+                      # Context: Strictly 20 Lines
                       post_ctx = "".join(lines[i+1:min(len(lines), i+1+CONTEXT_LINES)])
                       
                       log(f"🔎 Conflict: {filepath} (Line {start})")
@@ -270,110 +286,104 @@ jobs:
                   subprocess.run(["git", "add", filepath], check=True)
 
           if __name__ == "__main__":
-              if not os.path.exists("conflicts.txt"): sys.exit(0)
-              with open("conflicts.txt", "r") as f:
-                  files = [x.strip() for x in f if x.strip()]
-              
-              log(f"📋 Processing {len(files)} conflicted files...")
-              for f in files:
-                  if os.path.exists(f): process_file(f)
-
-              # Generate Report
-              REPORT.append("")
-              REPORT.append("## Statistics")
-              REPORT.append(f"- **Total Conflicts:** {STATS['total']}")
-              REPORT.append(f"- **AI Resolved:** {STATS['ai']}")
-              REPORT.append(f"- **Heuristic Fix:** {STATS['heuristic']}")
-              REPORT.append(f"- **Skipped (Safety):** {STATS['skipped']}")
-              REPORT.append(f"- **Failed (Fallback):** {STATS['failed']}")
-              
-              with open("TITANIUM_REPORT.md", "w") as f:
-                  f.write("\n".join(REPORT))
+              files = sys.argv[1:]
+              if files:
+                  log(f"📋 Processing {len(files)} files...")
+                  for f in files:
+                      if os.path.exists(f): process_file(f)
+                  
+                  # Write Report
+                  REPORT.append("")
+                  REPORT.append("## Statistics")
+                  REPORT.append(f"- **Total:** {STATS['total']}")
+                  REPORT.append(f"- **AI Fixed:** {STATS['ai']}")
+                  REPORT.append(f"- **Failed:** {STATS['failed']}")
+                  REPORT.append(f"- **429 Retries:** {STATS['retries']}")
+                  
+                  with open("TITANIUM_REPORT.md", "w") as f: f.write("\n".join(REPORT))
           EOF
           
-          # Fix Python Syntax
-          sed -i 's/__backtick__/```/g' titanium_core.py
+          sed -i 's/__backtick__/```/g' agent_brain.py
 
       # ========================================================
-      # PHASE 3: STRATEGIC MERGE (HISTOGRAM)
+      # 3. MERGE (HISTOGRAM)
       # ========================================================
-      - name: 🧬 Merge & Detect
-        id: merge
-        shell: bash
+      - name: 🧬 Merge (Smart Strategy)
+        id: merge_step
         run: |
           git remote add upstream "${{ inputs.upstream_repo }}" 2>/dev/null || true
-          git fetch upstream "${{ inputs.upstream_branch }}" --no-tags
-          
+          git fetch upstream "${{ inputs.upstream_branch }}" --no-tags --prune
+
           TS=$(date +%s)
           TMP="titanium-$TS"
           git checkout -b "$TMP" "origin/${{ inputs.target_branch }}"
-          echo "branch=$TMP" >> $GITHUB_OUTPUT
+          echo "tmp_branch=$TMP" >> $GITHUB_OUTPUT
 
-          # --- GHOST SUBMODULES (Anti-Crash) ---
-          git rm -r --cached toolchains > /dev/null 2>&1 || true
-
-          echo ">>> STARTING MERGE (Histogram Mode)..."
+          echo ">>> Executing Histogram Merge..."
           git merge "upstream/${{ inputs.upstream_branch }}" \
             --no-commit --no-ff \
             -s ort \
             -X find-renames=50% \
             -X ignore-all-space \
             -X diff-algorithm=histogram || true
-          
-          # File IPC
-          git diff --name-only --diff-filter=U > conflicts.txt
-          COUNT=$(wc -l < conflicts.txt)
-          
-          if [ "$COUNT" -gt "0" ]; then
-             echo "found_conflicts=true" >> $GITHUB_OUTPUT
-             echo "⚠️ Conflicts Detected: $COUNT"
-          else
-             echo "found_conflicts=false" >> $GITHUB_OUTPUT
-          fi
 
       # ========================================================
-      # PHASE 4: EXECUTION
+      # 4. RUN TITANIUM AGENT
       # ========================================================
-      - name: 🚑 Run Titanium Core
-        if: steps.merge.outputs.found_conflicts == 'true'
+      - name: 🚑 Run Titanium Agent
         run: |
-          echo ">>> ENGAGING TITANIUM v18..."
-          python3 -u titanium_core.py
-          rm titanium_core.py conflicts.txt
-      
+          CONFLICTS=$(git diff --name-only --diff-filter=U)
+          if [ ! -z "$CONFLICTS" ]; then
+             echo "Detected Conflicts: $CONFLICTS"
+             python3 agent_brain.py $CONFLICTS
+          else
+             echo "No text conflicts detected."
+          fi
+          rm agent_brain.py
+
       # ========================================================
-      # PHASE 5: REPORTING & ARTIFACTS
+      # 5. REPORTING
       # ========================================================
-      - name: 📤 Upload Titanium Report
-        if: steps.merge.outputs.found_conflicts == 'true'
+      - name: 📤 Upload Report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: titanium-report
           path: TITANIUM_REPORT.md
 
       # ========================================================
-      # PHASE 6: VERIFY & DEPLOY (WITH FAILSAFE)
+      # 6. VERIFY & DEPLOY
       # ========================================================
-      - name: 🔒 Verify & Push
+      - name: 🔍 Verify & Deploy
         run: |
-          # 1. MARKER SWEEP
-          grep -r -l "<<<<<<< HEAD" . | xargs sed -i '/<<<<<<< HEAD/d' || true
-          grep -r -l "=======" . | xargs sed -i '/=======/d' || true
-          grep -r -l ">>>>>>>" . | xargs sed -i '/>>>>>>>/d' || true
+          # A. Unmerged Check
+          if [[ -n $(git diff --name-only --diff-filter=U) ]]; then
+             echo "❌ CRITICAL: Unmerged files remain."
+             exit 1
+          fi
           
-          # 2. RESTORE SUBMODULES
+          # B. Marker Check
+          if grep -r "<<<<<<< HEAD" . --exclude-dir=.github; then
+             echo "❌ CRITICAL: Conflict markers found."
+             exit 1
+          fi
+
+          # C. Commit & Push
+          git rm -r --cached toolchains > /dev/null 2>&1 || true
           git add .
           git reset HEAD toolchains > /dev/null 2>&1 || true
           
           if git diff-index --quiet HEAD --; then
-             echo "⚠️ No changes to commit."
+             echo "⚠️ No changes."
           else
-             git commit -m "Apex Titanium: Auto-Merge (${{ inputs.ai_model }})"
+             git commit -m "Titanium Ultimate: Auto-Merge (${{ inputs.ai_model }})"
              
-             # Robust Push
+             TMP="${{ steps.merge_step.outputs.tmp_branch }}"
+             TARGET="${{ inputs.target_branch }}"
+             
              for i in {1..5}; do
-                if git push origin "${{ steps.merge.outputs.branch }}:refs/heads/${{ inputs.target_branch }}"; then
-                   echo "✅ DEPLOY SUCCESSFUL"
+                if git push origin "$TMP:refs/heads/$TARGET"; then
+                   echo "✅ DEPLOYED TO $TARGET"
                    exit 0
                 fi
                 sleep 5
@@ -382,30 +392,29 @@ jobs:
           fi
 
       # ========================================================
-      # PHASE 7: EMERGENCY PROTOCOLS
+      # 7. FAIL SAFE
       # ========================================================
-      - name: 🚨 Emergency Commit (WIP)
+      - name: 🚨 Emergency Commit
         if: failure()
         run: |
-          echo "⚠️ Workflow Failed. Committing WIP state..."
+          echo "⚠️ Workflow Failed. Saving WIP..."
           git rm -r --cached toolchains > /dev/null 2>&1 || true
           git add . || true
           git reset HEAD toolchains > /dev/null 2>&1 || true
-          git commit -m "⚠️ Auto-Merge Failed: Saving WIP" || true
-          git push origin "${{ steps.merge.outputs.branch }}" || true
+          
+          git commit -m "⚠️ Auto-Merge Failed: WIP" || true
+          TMP="${{ steps.merge_step.outputs.tmp_branch }}"
+          git push origin "$TMP" || true
 
-      - name: 📝 Create Failure Report PR
+      - name: 📝 Create Failure Report
         if: failure()
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          title: "❌ Titanium Merge Failed: Manual Fix Needed"
+          title: "❌ Titanium Merge Failed"
           body: |
-            The Apex Titanium Agent failed to resolve all conflicts safely.
-            **Branch:** `${{ steps.merge.outputs.branch }}`
-            1. Pull this branch.
-            2. Search for `<<<<<<< HEAD`.
-            3. Fix manually and push.
-          branch: ${{ steps.merge.outputs.branch }}
+            Manual Fix Needed.
+            Branch: `${{ steps.merge_step.outputs.tmp_branch }}`
+          branch: ${{ steps.merge_step.outputs.tmp_branch }}
           base: ${{ inputs.target_branch }}
           
