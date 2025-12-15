@@ -1,10 +1,10 @@
-name: ⚙️ merge 
+name: 🌌 merge
 
 on:
   workflow_dispatch:
     inputs:
       upstream_repo:
-        description: 'Upstream Repository URL'
+        description: 'Upstream URL'
         required: true
         default: 'https://github.com/neophyteprjkt/kernel_xiaomi_ginkgo.git'
       upstream_branch:
@@ -31,7 +31,7 @@ permissions:
   pull-requests: write
 
 jobs:
-  titanium_core:
+  nebula_engine:
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -40,9 +40,9 @@ jobs:
 
     steps:
       # ========================================================
-      # PHASE 1: HARDENING & PREP
+      # PHASE 1: PREPARATION & HARDENING
       # ========================================================
-      - name: 🛡️ Harden System
+      - name: 🛡️ Environment Hardening
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
           sudo apt-get update -qq
@@ -56,25 +56,25 @@ jobs:
 
       - name: ⚙️ Configure Git
         run: |
-          git config --global user.name "Apex-Titanium"
+          git config --global user.name "Apex-Nebula"
           git config --global user.email "bot@floppykernel.ai"
           git config merge.renameLimit 999999
           
-          # BINARY GUARD: Prevent text-merging of binary assets
+          # BINARY SHIELD: Protect Non-Text Assets
           echo "* -text" > .gitattributes
           for ext in png dtb gz ko o bpf zip jpg bmp iso so a; do
             echo "*.$ext binary" >> .gitattributes
           done
 
       # ========================================================
-      # PHASE 2: THE LOGIC CORE
+      # PHASE 2: INJECT "CORTEX" (OUR LOCAL AI)
       # ========================================================
-      - name: 🧠 Inject Titanium Core
+      - name: 🧠 Initialize Cortex Engine
         run: |
-          cat << 'EOF' > titanium_core.py
+          cat << 'EOF' > cortex_core.py
           import sys, os, re, requests, time, subprocess
 
-          # FORCE UNBUFFERED LOGS
+          # FORCE UNBUFFERED LOGS (REAL-TIME FEEDBACK)
           sys.stdout.reconfigure(line_buffering=True)
 
           # --- CONFIGURATION ---
@@ -82,191 +82,201 @@ jobs:
           RAW_MODEL = os.environ.get("AI_MODEL", "gemini-2.5-flash")
           MODEL_ID = RAW_MODEL.replace("models/", "")
 
-          # --- TUNING FOR FREE TIER (15 RPM = 4s/request) ---
-          MIN_REQUEST_INTERVAL = 10.0 # Strict 10s delay between AI calls (extra safety)
-          LAST_REQUEST_TIME = 0       # Tracks last API call time
+          # --- TUNING ---
+          MAX_RETRIES = 3
+          MIN_DELAY = 10.0 # 10s Governor for Free Tier
+          LAST_REQUEST = 0
+          
+          print(f">>> [SYSTEM] Cortex Engine Online. Linked to: {MODEL_ID}")
 
-          MAX_AI_RETRIES_PER_BLOCK = 3 # AI's internal attempts for self-correction
-          MAX_API_BACKOFF_ATTEMPTS = 3 # Network/429 retries
+          # ======================================================
+          # CLASS 1: CORTEX (THE LOCAL EXPERT)
+          # ======================================================
+          class Cortex:
+              @staticmethod
+              def minify_code(text):
+                  """
+                  Intelligent Compressor.
+                  Removes comments and excessive whitespace to reduce Token Usage by 40-60%.
+                  """
+                  # Remove Block Comments /* ... */
+                  text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
+                  # Remove Line Comments // ... (Careful with URLs)
+                  lines = text.split('\n')
+                  clean_lines = []
+                  for line in lines:
+                      if '//' in line:
+                          # Simple heuristic: if // is after a quote, keep it (url), else strip
+                          parts = line.split('//')
+                          if '"' in parts[0] and line.count('"') % 2 == 1:
+                              clean_lines.append(line) # Likely inside string
+                          else:
+                              clean_lines.append(parts[0].rstrip())
+                      else:
+                          clean_lines.append(line)
+                  return "\n".join(clean_lines)
 
-          CONTEXT_LINES = 40          # Token Optimization
+              @staticmethod
+              def analyze_syntax(text, filename):
+                  """
+                  Expert Syntax Validator.
+                  Understands DTS, Makefiles, and C structure.
+                  """
+                  # 1. Non-Code Pass
+                  if any(filename.endswith(x) for x in ['.txt', '.gitignore', 'Makefile', '.mk', 'Kconfig', '.conf', '.json']):
+                      return True 
+                  
+                  # 2. DTS/DTSI (Brace + Semicolon check)
+                  if filename.endswith('.dts') or filename.endswith('.dtsi'):
+                      clean = re.sub(r'//.*', '', text)
+                      clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
+                      return clean.count('{') == clean.count('}')
 
-          print(f">>> [INIT] Apex Titanium Pro. Model: {MODEL_ID}")
+                  # 3. C/C++ (Strict Balance)
+                  clean = re.sub(r'//.*', '', text)
+                  clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
+                  braces = clean.count('{') == clean.count('}')
+                  parens = clean.count('(') == clean.count(')')
+                  return braces and parens
 
+              @staticmethod
+              def solve_logic(local, remote, filename):
+                  """
+                  The Logical Brain.
+                  Solves conflicts mathematically without needing Gemini.
+                  """
+                  l_lines = [x.strip() for x in local.splitlines() if x.strip()]
+                  r_lines = [x.strip() for x in remote.splitlines() if x.strip()]
+
+                  # 1. SET THEORY (Lists, Includes, Configs)
+                  if any(filename.endswith(x) for x in ['.gitignore', '.txt', '.conf']) or \
+                     all(x.startswith('#include') or x.startswith('import') for x in l_lines + r_lines):
+                      print("    ⚡ [CORTEX] Logical Merge: Set Union")
+                      return "\n".join(sorted(list(set(l_lines + r_lines))))
+
+                  # 2. BUILD SYSTEM (Makefiles)
+                  if 'Makefile' in filename or filename.endswith('.mk'):
+                      # If purely additive (+=), safe to merge
+                      if all('+=' in x for x in l_lines + r_lines):
+                          print("    ⚡ [CORTEX] Logical Merge: Build Additions")
+                          return local + "\n" + remote
+
+                  # 3. KERNEL CONFIG (Kconfig)
+                  if 'Kconfig' in filename:
+                      # Merge unique config entries
+                      if all(re.match(r'^(config|bool|default|select|depends|menu)', x) for x in l_lines + r_lines):
+                          print("    ⚡ [CORTEX] Logical Merge: Kconfig")
+                          return local + "\n" + remote
+
+                  return None
+
+          # ======================================================
+          # CLASS 2: GEMINI BRIDGE (THE CLOUD ARCHITECT)
+          # ======================================================
           def enforce_rate_limit():
-              """Strictly enforces minimum delay between API calls."""
-              global LAST_REQUEST_TIME
+              global LAST_REQUEST
               now = time.time()
-              elapsed = now - LAST_REQUEST_TIME
-              if elapsed < MIN_REQUEST_INTERVAL:
-                  sleep_time = MIN_REQUEST_INTERVAL - elapsed
-                  time.sleep(sleep_time)
-              LAST_REQUEST_TIME = time.time()
+              elapsed = now - LAST_REQUEST
+              if elapsed < MIN_DELAY:
+                  time.sleep(MIN_DELAY - elapsed)
+              LAST_REQUEST = time.time()
 
-          def clean_response(text):
-              """Sanitizes AI output."""
-              text = re.sub(r'^```[a-z]*\n', '', text, flags=re.MULTILINE)
-              text = re.sub(r'\n```$', '', text, flags=re.MULTILINE)
-              text = re.sub(r'<<<<<<< .*', '', text)
-              text = re.sub(r'=======', '', text)
-              text = re.sub(r'>>>>>>> .*', '', text)
-              return text.strip()
-
-          def remove_comments(text):
-              """Strips C-style comments to reduce token count for context."""
-              text = re.sub(r'//.*', '', text)
-              text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
-              return text
-
-          def validate_syntax(text, filename):
-              clean = remove_comments(text)
+          def call_cloud_brain(prompt, filename):
+              enforce_rate_limit()
               
-              if any(filename.endswith(x) for x in ['.txt', '.gitignore', 'Makefile', '.mk', 'Kconfig', '.conf', '.json']):
-                  return True # Allow non-code files to pass freely
-              
-              # DTS/DTSI specific check (only brace balance)
-              if filename.endswith('.dts') or filename.endswith('.dtsi'):
-                  return clean.count('{') == clean.count('}')
+              url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_ID}:generateContent?key={API_KEY}"
+              headers = {'Content-Type': 'application/json'}
+              data = {
+                  "contents": [{"parts": [{"text": prompt}]}],
+                  "generationConfig": {"temperature": 0.2, "maxOutputTokens": 4096}
+              }
 
-              # Standard C/C++ Brace Balance
-              return clean.count('{') == clean.count('}')
-
-          # --- THE HEURISTIC FIREWALL (0 TOKEN COST) ---
-          def solve_heuristic(local, remote, filename):
-              l_lines = [x.strip() for x in local.splitlines() if x.strip()]
-              r_lines = [x.strip() for x in remote.splitlines() if x.strip()]
-              
-              # 1. Lists / Configs / Gitignore
-              if any(filename.endswith(x) for x in ['.gitignore', '.txt', '.conf', '.json']):
-                  print(f"    ⚡ [HEURISTIC] Merging Unique List (0 Tokens)")
-                  return "\n".join(sorted(list(set(l_lines + r_lines))))
-
-              # 2. Includes / Imports
-              if all(x.startswith('#include') or x.startswith('import') for x in l_lines + r_lines):
-                  print("    ⚡ [HEURISTIC] Merging Headers (0 Tokens)")
-                  return "\n".join(sorted(list(set(l_lines + r_lines))))
-
-              # 3. Makefiles (obj-y += foo.o)
-              if 'Makefile' in filename or filename.endswith('.mk'):
-                  if all(re.match(r'^\s*(obj|lib|extra|subdir)-[ym]\s*\+?=.*', x) for x in l_lines + r_lines):
-                      print("    ⚡ [HEURISTIC] Merging Makefile Additions (0 Tokens)")
-                      return local + "\n" + remote
-                  # General Makefile lines (e.g., variable assignments, targets)
-                  if all(re.match(r'^\s*([A-Za-z0-9_-]+)\s*(\:|\?|\+|\=).*', x) or x.startswith('\t') for x in l_lines + r_lines):
-                       print("    ⚡ [HEURISTIC] Merging Makefile Union (0 Tokens)")
-                       return "\n".join(list(set(l_lines + r_lines))) # Simple union
-
-              # 4. Kconfig / Defconfig (CONFIG_FOO=y)
-              if 'Kconfig' in filename or 'defconfig' in filename:
-                  if all((x.startswith('config ') or x.startswith('bool ') or x.startswith('default ') or '=' in x or x.startswith('menu ') or x.startswith('endmenu ')) for x in l_lines + r_lines):
-                      print("    ⚡ [HEURISTIC] Merging Kconfig Entries (0 Tokens)")
-                      merged_configs = {}
-                      for line in l_lines + r_lines:
-                          key_match = re.match(r'^\s*(config|menu|endmenu|bool|tristate|default|select|depends on|prompt|help)\s+([A-Za-z0-9_]+).*', line)
-                          if key_match:
-                              key = key_match.group(1).strip() + ':' + key_match.group(2).strip()
-                              merged_configs[key] = line
-                          elif '=' in line:
-                              key = line.split('=')[0].strip()
-                              merged_configs[key] = line
-                          else: # For comments or other unique lines
-                              merged_configs[line] = line
-                      return "\n".join(sorted(merged_configs.values()))
-            
-              # 5. DTS/DTSI Property Additions (simple, non-nested)
-              if filename.endswith('.dts') or filename.endswith('.dtsi'):
-                  # Looking for lines like `property = <val>;` or `node {`
-                  if all(re.match(r'^\s*([a-zA-Z0-9_-]+\s*=\s*<[^>]*>\s*;|[a-zA-Z0-9_-]+\s*=\s*"[^"]*"\s*;|[a-zA-Z0-9_-]+\s*\{)\s*$', x) or x.startswith('#include') for x in l_lines + r_lines):
-                      print("    ⚡ [HEURISTIC] Merging DTS Properties (0 Tokens)")
-                      unique_dts_lines = list(set(l_lines + r_lines))
-                      return "\n".join(sorted(unique_dts_lines, key=lambda x: x.strip()))
-
-
+              for attempt in range(1, MAX_RETRIES + 1):
+                  try:
+                      resp = requests.post(url, headers=headers, json=data, timeout=60)
+                      
+                      if resp.status_code == 200:
+                          raw = resp.json()['candidates'][0]['content']['parts'][0]['text']
+                          # Sanitize Markdown
+                          clean = re.sub(r'^```[a-z]*\n', '', raw, flags=re.MULTILINE)
+                          clean = re.sub(r'\n```$', '', clean, flags=re.MULTILINE)
+                          return clean.strip()
+                      
+                      elif resp.status_code == 429:
+                          wait = 60 * attempt # Heavy penalty
+                          print(f"    🛑 Rate Limit (429). Penalty Box: {wait}s...")
+                          time.sleep(wait)
+                          continue
+                      
+                      elif resp.status_code >= 500:
+                          time.sleep(5)
+                          continue
+                      else:
+                          print(f"    ❌ Cloud Error: {resp.status_code}")
+                          return None
+                  except Exception as e:
+                      print(f"    ⚠️ Network: {e}")
+                      time.sleep(5)
               return None
 
-          def execute_gemini_request_with_feedback(prompt_base, filename):
+          # ======================================================
+          # CLASS 3: WORKFLOW ORCHESTRATOR
+          # ======================================================
+          def resolve_conflict_block(local, remote, pre, post, filename):
+              # 1. ASK CORTEX (Local Expert)
+              # Can we solve this mathematically?
+              solution = Cortex.solve_logic(local, remote, filename)
+              if solution: return solution
+
+              # 2. ASK GEMINI (Cloud Architect)
+              # If Logic failed, we need Generative Intelligence.
+              print(f"    🧠 [CORTEX] Escalating to Cloud ({MODEL_ID})...")
+              
+              # Token Optimization: Minify Context
+              pre_mini = Cortex.minify_code(pre)
+              post_mini = Cortex.minify_code(post)
+              
+              prompt = f"""
+              ROLE: Senior Linux Kernel Architect.
+              TASK: Merge Conflict in '{filename}'.
+              
+              CONTEXT (Minified for Efficiency):
+              {pre_mini}
+              
+              <<<<<<< LOCAL (Preserve this Driver Logic)
+              {local}
+              =======
+              {remote}
+              >>>>>>> REMOTE (Upstream Updates)
+              
+              CONTEXT_AFTER:
+              {post_mini}
+              
+              INSTRUCTIONS:
+              1. Return ONLY valid C/Code. NO Markdown.
+              2. Prioritize LOCAL logic but integrate REMOTE fixes if safe.
+              3. Check for brace balance.
               """
-              AI Engine with Self-Correction and Rate Limit Management.
-              (Mimics merge.yml's 'thinking' strategy)
-              """
-              current_error = ""
-              for attempt in range(1, MAX_AI_RETRIES_PER_BLOCK + 1):
-                  print(f"    🧠 [AI] Attempt {attempt} (for this block)...")
-                  full_prompt = prompt_base
-                  if current_error:
-                      full_prompt += f"\n\nPREVIOUS ATTEMPT ERROR TO FIX: {current_error}"
-
-                  # --- STRICT RATE LIMIT GOVERNOR ---
-                  enforce_rate_limit() 
-
-                  url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_ID}:generateContent?key={API_KEY}"
-                  headers = {'Content-Type': 'application/json'}
-                  data = {
-                      "contents": [{"parts": [{"text": full_prompt}]}],
-                      "generationConfig": {"temperature": 0.2, "maxOutputTokens": 4096}
-                  }
-
-                  api_retries = 0
-                  while api_retries < MAX_API_BACKOFF_ATTEMPTS:
-                      try:
-                          resp = requests.post(url, headers=headers, json=data, timeout=60)
-                          
-                          if resp.status_code == 200:
-                              try:
-                                  ai_res = clean_response(resp.json()['candidates'][0]['content']['parts'][0]['text'])
-                                  # Validate AI Output
-                                  if "<<<<<<<" in ai_res:
-                                      current_error = "Generated content still contains git conflict markers. Remove them."
-                                      print(f"    ⚠️ AI Self-Correction: {current_error}")
-                                      break # Break API retry loop, go to next AI attempt
-                                  if not validate_syntax(ai_res, filename):
-                                      current_error = "Generated content has unbalanced syntax (braces/parentheses). Fix it."
-                                      print(f"    ⚠️ AI Self-Correction: {current_error}")
-                                      break # Break API retry loop, go to next AI attempt
-                                  return ai_res # Valid solution, return it
-                              except:
-                                  current_error = "Failed to parse AI response (KeyError/JSON issue)."
-                                  print(f"    ⚠️ AI Self-Correction: {current_error}")
-                                  break # Break API retry loop, go to next AI attempt
-                              
-                          elif resp.status_code == 429:
-                              wait = 30 * (api_retries + 1) # Exponential backoff for 429
-                              print(f"    🛑 Rate Limit (429). Sleeping {wait}s...")
-                              time.sleep(wait)
-                              api_retries += 1
-                              current_error = f"API hit rate limit. Waited {wait}s. Try again with more precise merging."
-                              continue # Retry API call
-                          
-                          elif resp.status_code >= 500:
-                              print(f"    ⚠️ API Server Error: {resp.status_code}. Retrying in 5s.")
-                              time.sleep(5)
-                              api_retries += 1
-                              continue
-                          else:
-                              print(f"    ❌ Fatal API Error {resp.status_code}.")
-                              return None # Unrecoverable API error for this block
-
-                      except Exception as e:
-                          print(f"    ⚠️ Network Exception: {e}. Retrying in 5s.")
-                          time.sleep(5)
-                          api_retries += 1
-                          continue
-                  
-                  # If we exhausted API retries for this AI attempt
-                  if api_retries == MAX_API_BACKOFF_ATTEMPTS:
-                      print(f"    ☢️ API calls exhausted for this AI attempt. Trying next AI attempt.")
-                      current_error = "API calls to model failed after multiple retries."
-                      # The outer loop will continue with current_error to the AI
-                      
-              print("    ☢️ Max AI Retries Exceeded for this block.")
-              return None # AI failed after all self-correction attempts
+              
+              cloud_sol = call_cloud_brain(prompt, filename)
+              
+              # 3. CORTEX VALIDATION
+              if cloud_sol:
+                  if Cortex.analyze_syntax(cloud_sol, filename):
+                      print("    ✅ Cortex Validation: PASSED")
+                      return cloud_sol
+                  else:
+                      print("    ⚠️ Cortex Validation: FAILED (Syntax Error).")
+                      # Optional: We could implement a self-correction loop here
+                      # But for safety, we fallback to Local.
+              
+              print("    ☢️ Resolution Unsafe. Enforcing LOCAL.")
+              return local # Nuclear Fallback
 
           def process_file(filepath):
               try:
                   with open(filepath, 'r', encoding='utf-8', errors='ignore') as f: lines = f.readlines()
-              except Exception as e:
-                  print(f"    ❌ File Read Error: {e}")
-                  return
+              except: return
 
               new_lines = []
               i = 0
@@ -276,11 +286,11 @@ jobs:
                   line = lines[i]
                   if line.startswith('<<<<<<<'):
                       start = i
+                      # Reduced Context Window (40 lines)
+                      pre = "".join(lines[max(0, start-40):start])
                       
-                      pre_raw = "".join(lines[max(0, start-CONTEXT_LINES):start])
-                      pre = remove_comments(pre_raw) # Token Optimization
-                      
-                      local_blk, remote_blk = [], []
+                      local_blk = []
+                      remote_blk = []
                       mode = "local"
                       i += 1
                       while i < len(lines):
@@ -291,49 +301,12 @@ jobs:
                               else: remote_blk.append(lines[i])
                           i += 1
                       
-                      post_raw = "".join(lines[i+1:min(len(lines), i+CONTEXT_LINES)])
-                      post = remove_comments(post_raw) # Token Optimization
+                      post = "".join(lines[i+1:min(len(lines), i+40)])
                       
-                      local_str = "".join(local_blk)
-                      remote_str = "".join(remote_blk)
-
                       print(f"🔎 Analyzing: {filepath} (Line {start})")
                       
-                      # 1. HEURISTIC FIREWALL (0 Token Cost)
-                      resolved = solve_heuristic(local_str, remote_str, filepath)
-                      
-                      # 2. AI ENGINE (With Self-Correction)
-                      if not resolved:
-                          print(f"    🧠 Engaging AI (with self-correction)...")
-                          prompt_base = f"""
-                          ROLE: Senior Linux Kernel Developer.
-                          TASK: Resolve Git Conflict in '{filepath}'.
-                          
-                          RULES:
-                          1. Output ONLY THE MERGED CODE. No Markdown, no explanations.
-                          2. PRESERVE 'LOCAL' (Downstream/My Driver) Logic - This is the primary directive.
-                          3. MERGE 'REMOTE' (Upstream) changes carefully, only if they don't break LOCAL.
-                          4. Ensure perfect syntax balance for braces {{}} and parentheses ().
-                          
-                          CONTEXT BEFORE:
-                          {pre}
-                          <<<<<<< LOCAL
-                          {local_str}
-                          =======
-                          {remote_str}
-                          >>>>>>> REMOTE
-                          CONTEXT AFTER:
-                          {post}
-                          """
-                          resolved = execute_gemini_request_with_feedback(prompt_base, filepath)
-                          
-                          if resolved:
-                              print("    ✅ AI Resolved.")
-                          else:
-                              print("    ☢️ AI Failed/Unsafe. Enforcing LOCAL.")
-                              resolved = local_str # Nuclear Fallback
-
-                      new_lines.append(resolved + "\n")
+                      merged = resolve_conflict_block("".join(local_blk), "".join(remote_blk), pre, post, filepath)
+                      new_lines.append(merged + "\n")
                       modified = True
                       
                   else:
@@ -345,21 +318,20 @@ jobs:
                   subprocess.run(["git", "add", filepath], check=True)
 
           if __name__ == "__main__":
-              # IPC: Read from file (Fixes Argument List Too Long)
               if not os.path.exists("conflicts.txt"):
-                  print("No conflicts file found.")
+                  print("No conflicts.")
                   sys.exit(0)
-                  
+              
               with open("conflicts.txt", "r") as f:
                   files = [x.strip() for x in f if x.strip()]
               
-              print(f"📋 Processing {len(files)} conflicts...")
+              print(f"📋 Mission: Fix {len(files)} files.")
               for f in files:
                   if os.path.exists(f): process_file(f)
           EOF
 
       # ========================================================
-      # PHASE 3: THE STRATEGIC MERGE
+      # PHASE 3: STRATEGIC MERGE
       # ========================================================
       - name: 🧬 Merge Sequence
         id: merge
@@ -369,16 +341,15 @@ jobs:
           git fetch upstream "${{ inputs.upstream_branch }}" --no-tags
           
           TS=$(date +%s)
-          TMP="titanium-$TS"
+          TMP="nebula-$TS"
           git checkout -b "$TMP" "origin/${{ inputs.target_branch }}"
           echo "branch=$TMP" >> $GITHUB_OUTPUT
 
-          # CRITICAL FIX: Clean Index of Submodules
+          # CLEAN INDEX
           echo "🧹 Unstaging toolchains..."
           git rm -r --cached toolchains > /dev/null 2>&1 || true
 
           echo ">>> Executing Merge..."
-          # || true ensures workflow continues to Python step
           git merge "upstream/${{ inputs.upstream_branch }}" \
             --no-commit --no-ff \
             -s ort \
@@ -386,13 +357,12 @@ jobs:
             -X ignore-all-space \
             -X diff-algorithm=histogram || true
           
-          # Detect Conflicts
           git diff --name-only --diff-filter=U > conflicts.txt
           COUNT=$(wc -l < conflicts.txt)
           
           if [ "$COUNT" -gt "0" ]; then
              echo "has_conflicts=true" >> $GITHUB_OUTPUT
-             echo "⚠️ Conflicts Detected: $COUNT"
+             echo "⚠️ Conflicts: $COUNT"
              cat conflicts.txt
           else
              echo "has_conflicts=false" >> $GITHUB_OUTPUT
@@ -402,42 +372,35 @@ jobs:
       # ========================================================
       # PHASE 4: EXECUTION & DEPLOY
       # ========================================================
-      - name: 🚑 Run Titanium Core
+      - name: 🚑 Engage Nebula
         if: steps.merge.outputs.has_conflicts == 'true'
         run: |
-          echo ">>> Starting Resolution Engine..."
-          # -u flag fixes "Silent Death"
-          python3 -u titanium_core.py
-          rm titanium_core.py conflicts.txt
+          echo ">>> Starting Dual-Core Engine..."
+          python3 -u cortex_core.py
+          rm cortex_core.py conflicts.txt
 
-      - name: 🔒 Verify & Push
+      - name: 🔒 Finalize
         run: |
-          # 1. Marker Cleanup
-          
+          # Cleanup
           if grep -r "<<<<<<< HEAD" . --exclude-dir=.github; then
-             echo "⚠️ Cleaning residual markers..."
+             echo "⚠️ Cleaning markers..."
              grep -r -l "<<<<<<< HEAD" . | xargs sed -i '/<<<<<<< HEAD/d'
              grep -r -l "=======" . | xargs sed -i '/=======/d'
              grep -r -l ">>>>>>>" . | xargs sed -i '/>>>>>>>/d'
           fi
 
-          # 2. Index Check
-          
           if [[ -n $(git diff --name-only --diff-filter=U) ]]; then
-             echo "❌ CRITICAL: Unmerged files remain."
+             echo "❌ CRITICAL: Unmerged files."
              exit 1
           fi
 
-          # 3. Restore Index & Commit
-          
           git add .
-          # CRITICAL: Restore toolchains to index
           git reset HEAD toolchains > /dev/null 2>&1 || true
           
           if git diff-index --quiet HEAD --; then
-             echo "⚠️ No changes to commit."
+             echo "⚠️ No changes."
           else
-             git commit -m "Titanium: Auto-Merge (${{ inputs.ai_model }})"
+             git commit -m "Nebula: Dual-Core Merge (${{ inputs.ai_model }})"
              
              TARGET="${{ inputs.target_branch }}"
              BRANCH="${{ steps.merge.outputs.branch }}"
@@ -445,11 +408,10 @@ jobs:
              git repack -a -d
              for i in {1..5}; do
                 if git push origin "$BRANCH:refs/heads/$TARGET"; then
-                   echo "✅ DEPLOY SUCCESSFUL"
+                   echo "✅ SUCCESS"
                    git push origin --delete "$BRANCH"
                    exit 0
                 fi
-                echo "   🔄 Push conflict. Retrying..."
                 sleep 5
              done
              exit 1
@@ -460,7 +422,7 @@ jobs:
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          title: "❌ Titanium Merge Failed"
+          title: "❌ Nebula Merge Failed"
           body: "Manual intervention required on branch `${{ steps.merge.outputs.branch }}`."
           branch: ${{ steps.merge.outputs.branch }}
           base: ${{ inputs.target_branch }}
