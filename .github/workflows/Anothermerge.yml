@@ -1,4 +1,4 @@
-name: 🌌 merge 
+name: 🌌 merge
 
 on:
   workflow_dispatch:
@@ -67,6 +67,7 @@ jobs:
         run: |
           git config --global user.name "Apex-Singularity"
           git config --global user.email "singularity@apex-ai.org"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git config merge.renameLimit 999999
           
           # BINARY PROTECTION PROTOCOL
@@ -79,11 +80,12 @@ jobs:
       # 2. DEPLOY SINGULARITY KERNEL (PYTHON)
       # ========================================================
       - name: 🧠 Deploy Neural Core
+        shell: bash
         run: |
-          # The Singularity Kernel is injected via HEREDOC.
+          # The Singularity Kernel is injected via HEREDOC with a unique delimiter.
           # We use HEX encoding for regex to prevent YAML/JS parsing collision.
           
-          cat << 'EOF' > singularity.py
+          cat << 'EOF_SINGULARITY' > singularity.py
           #!/usr/bin/env python3
           import sys, os, time, re, requests, subprocess, json, math
           from datetime import datetime
@@ -94,8 +96,8 @@ jobs:
           MODEL = os.environ.get("AI_MODEL", "gemini-2.5-flash")
           
           # --- HEX-ENCODED REGEX (SAFETY FIRST) ---
-          # Decodes to: r'^```[a-zA-Z]*\n' and r'\n```$'
-          # This prevents any possibility of script injection failure.
+          # Decoded: Start and End Markdown Code Block patterns.
+          # Hex encoding prevents script injection failures in YAML/JS.
           RX_START = bytes.fromhex('5e6060605b612d7a412d5a5d2a0a').decode('utf-8')
           RX_END   = bytes.fromhex('0a60606024').decode('utf-8')
 
@@ -127,7 +129,6 @@ jobs:
               @staticmethod
               def check(text):
                   balance = 0
-                  stack = []
                   i = 0
                   length = len(text)
                   
@@ -137,19 +138,18 @@ jobs:
                   
                   while i < length:
                       char = text[i]
-                      # Lookahead
                       next_char = text[i+1] if i + 1 < length else ''
                       
                       if in_line_comm:
-                          if char == '\n': in_line_comm = False
+                          if char == '': in_line_comm = False
                       elif in_blk_comm:
                           if char == '*' and next_char == '/':
                               in_blk_comm = False; i += 1
                       elif in_str:
-                          if char == '\\': i += 1 # Skip escape
+                          if char == '\': i += 1 # Skip escape
                           elif char == quote: in_str = False
                       elif in_char:
-                          if char == '\\': i += 1
+                          if char == '\': i += 1
                           elif char == quote: in_char = False
                       else:
                           # Entry points
@@ -297,12 +297,12 @@ jobs:
                                   fix = self.resolve(fpath, "".join(local_blk), "".join(remote_blk), pre, post)
                                   
                                   if fix:
-                                      new_content.append(fix + "\n")
+                                      new_content.append(fix + "")
                                       self.log("    ✅ Resolved.")
                                   else:
                                       self.log("    🛡️ Resolution Unsafe. Fallback to LOCAL.")
                                       new_content.append("".join(local_blk))
-                                      new_content.append(f"// TODO: SINGULARITY_SKIPPED {datetime.now()}\n")
+                                      new_content.append(f"// TODO: SINGULARITY_SKIPPED {datetime.now()}")
                                   
                                   modified = True
                               else:
@@ -316,11 +316,11 @@ jobs:
                       except Exception as e:
                           self.log(f"    ☠️ Fatal IO Error: {e}")
                   
-                  with open("SINGULARITY_LOG.md", "w") as f: f.write("\n".join(self.log_buffer))
+                  with open("SINGULARITY_LOG.md", "w") as f: f.write("".join(self.log_buffer))
 
           if __name__ == "__main__":
               SingularityAgent().execute()
-          EOF
+          EOF_SINGULARITY
 
       # ========================================================
       # 3. STRATEGIC MERGE (ORTHOGONAL)
@@ -328,12 +328,17 @@ jobs:
       - name: 🧬 Initiate Merge Sequence
         id: merge_op
         run: |
-          git remote add upstream "${{ inputs.upstream_repo }}" 2>/dev/null || true
+          # Clean remote to avoid 'already exists' error
+          git remote remove upstream 2>/dev/null || true
+          git remote add upstream "${{ inputs.upstream_repo }}"
           git fetch upstream "${{ inputs.upstream_branch }}" --no-tags --prune
 
-          UID=$(date +%s)
-          BRANCH="singularity-$UID"
-          git checkout -b "$BRANCH" "origin/${{ inputs.target_branch }}"
+          # UID is readonly in bash, using EPOCH_VAL.
+          EPOCH_VAL=$(date +%s)
+          BRANCH="singularity-$EPOCH_VAL"
+          
+          # Force checkout (-B) to overwrite if branch exists from failed run
+          git checkout -B "$BRANCH" "origin/${{ inputs.target_branch }}"
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
 
           # ORT Strategy + Patience Diff + Ignore Whitespace = Minimum Conflicts
@@ -393,15 +398,26 @@ jobs:
              BRANCH="${{ steps.merge_op.outputs.branch }}"
              TARGET="${{ inputs.target_branch }}"
              
-             # Atomic Push with Retry
+             # Atomic Push with Retry and Rebase Abort Logic
              for i in {1..5}; do
-                git pull origin "$TARGET" --rebase || true
-                if git push origin "$BRANCH:refs/heads/$TARGET"; then
-                   echo "✅ DEPLOYMENT SUCCESSFUL"
-                   exit 0
+                echo "Attempt $i: Pulling and Rebase..."
+                
+                if git pull origin "$TARGET" --rebase; then
+                   echo "Rebase successful. Pushing..."
+                   if git push origin "$BRANCH:refs/heads/$TARGET"; then
+                      echo "✅ DEPLOYMENT SUCCESSFUL"
+                      exit 0
+                   fi
+                else
+                   echo "⚠️ Rebase failed. Aborting rebase to clean state..."
+                   git rebase --abort 2>/dev/null || true
                 fi
+                
+                echo "Waiting 5s before retry..."
                 sleep 5
              done
+             
+             echo "❌ Failed to push after 5 attempts."
              exit 1
           fi
 
@@ -427,3 +443,4 @@ jobs:
           body: "Automatic resolution failed. Manual intervention required on branch `${{ steps.merge_op.outputs.branch }}`."
           branch: ${{ steps.merge_op.outputs.branch }}
           base: ${{ inputs.target_branch }}
+          
