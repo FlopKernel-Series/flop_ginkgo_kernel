@@ -65,7 +65,7 @@ jobs:
           done
 
       # ========================================================
-      # PHASE 2: INJECT TITANIUM CORE (ADAPTIVE ENGINE)
+      # PHASE 2: INJECT TITANIUM CORE (OBSIDIAN ENGINE)
       # ========================================================
       - name: 🧠 Inject Titanium Core
         run: |
@@ -80,22 +80,27 @@ jobs:
           MODEL = os.environ.get("MODEL_ID", "gemini-2.5-flash").replace("models/", "")
           
           # --- TUNING PARAMETERS ---
-          CONTEXT_LINES = 30       # Reduced to 30 to lower Token Usage
+          CONTEXT_LINES = 20       # EXACTLY 20 Lines
           MAX_RETRIES = 3          # Attempts per file
-          REQUEST_DELAY = 12       # 12s = 5 Requests/Min (Safe Zone)
-          PENALTY_WAIT = 60        # Full Bucket Reset for 429s
+          REQUEST_DELAY = 12       # 12s = 5 RPM (Safe)
+          PENALTY_WAIT = 60        # 429 Penalty
+          MAX_BLOCK_SIZE = 200     # Token Safety
 
-          print(f">>> [INIT] Titanium v15.0 (Adaptive). Model: {MODEL}")
+          # --- LOGGER STATS ---
+          REPORT = ["# 🛡️ Apex Titanium v18.0 Report", ""]
+          STATS = {'total': 0, 'heuristic': 0, 'ai': 0, 'failed': 0, 'skipped': 0}
+
+          print(f">>> [INIT] Titanium v18.0 (Obsidian). Model: {MODEL}")
+
+          def log(msg):
+              print(msg)
+              REPORT.append(msg.strip())
 
           def clean_response(text):
-              """Sanitizes AI output to ensure pure code."""
+              """Sanitizes AI output."""
               text = re.sub(r'^__backtick__[a-z]*\n', '', text, flags=re.MULTILINE)
               text = re.sub(r'\n__backtick__$', '', text, flags=re.MULTILINE)
               text = text.replace("__backtick__", "```")
-              # Remove hallucinatory markers
-              text = re.sub(r'<<<<<<< .*', '', text)
-              text = re.sub(r'=======', '', text)
-              text = re.sub(r'>>>>>>> .*', '', text)
               return text.strip()
 
           def get_brace_balance(text):
@@ -103,39 +108,37 @@ jobs:
               clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
               return clean.count('{') - clean.count('}')
 
-          def validate_relative_syntax(ai_code, local_code, filename):
+          def validate_syntax(ai_code, local_code, filename):
+              # 1. Hallucination Check (Markers)
+              if "<<<<<<<" in ai_code or "=======" in ai_code or ">>>>>>>" in ai_code:
+                  return False
+
+              # 2. Config Bypass
               if any(filename.endswith(x) for x in ['.txt', '.gitignore', 'Makefile', '.mk', 'Kconfig', '.conf']):
                   return True 
               
+              # 3. Unclosed Comments
+              if ai_code.count('/*') != ai_code.count('*/'):
+                  return False
+
+              # 4. Brace Balance
               local_bal = get_brace_balance(local_code)
               ai_bal = get_brace_balance(ai_code)
-
               if local_bal == 0 and ai_bal != 0:
                   return False
+                  
               return True
 
           def solve_heuristic(local, remote, filename):
-              """
-              Bypasses AI for Configuration Files.
-              Uses Set Union to merge lists (Kconfig, defconfig, gitignore).
-              """
-              # 1. Config & List Files
               is_config = any(x in filename for x in ['defconfig', 'Kconfig', '.gitignore', '.txt'])
-              
               if is_config:
-                  print(f"    ⚡ [HEURISTIC] Optimized Merge: {filename}")
-                  # Split, Strip, Unique, Sort
                   l_lines = set(x.strip() for x in local.splitlines() if x.strip())
                   r_lines = set(x.strip() for x in remote.splitlines() if x.strip())
                   merged = sorted(list(l_lines.union(r_lines)))
                   return "\n".join(merged)
-              
               return None
 
           def execute_gemini(prompt):
-              """
-              Executes API call with 12s ATOMIC Rate Limiting.
-              """
               url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent?key={API_KEY}"
               headers = {'Content-Type': 'application/json'}
               data = {
@@ -147,28 +150,24 @@ jobs:
                   try:
                       resp = requests.post(url, headers=headers, json=data, timeout=60)
                       
-                      # 1. SUCCESS
                       if resp.status_code == 200:
-                          # Atomic Cool-down: 12s Sleep to guarantee < 5 RPM
                           time.sleep(REQUEST_DELAY) 
                           try:
                               return clean_response(resp.json()['candidates'][0]['content']['parts'][0]['text'])
                           except: return None
                       
-                      # 2. RATE LIMIT (429)
                       elif resp.status_code == 429:
                           wait = PENALTY_WAIT + random.uniform(1, 10)
                           print(f"    🛑 Rate Limit (429). Cooling {wait:.1f}s...")
                           time.sleep(wait)
                           continue 
                       
-                      # 3. SERVER ERROR (5xx)
                       elif resp.status_code >= 500:
                           time.sleep(10)
                           continue
                       
                       else:
-                          print(f"    ❌ API Error {resp.status_code}: {resp.text[:100]}")
+                          print(f"    ❌ API Error {resp.status_code}")
                           return None
                               
                   except Exception as e:
@@ -178,23 +177,29 @@ jobs:
               return None
 
           def solve_conflict_block(local, remote, pre, post, filename):
-              # 1. Check Heuristics First
+              STATS['total'] += 1
+              
+              # 1. Heuristic Bypass
               heuristic = solve_heuristic(local, remote, filename)
-              if heuristic: return heuristic
+              if heuristic: 
+                  STATS['heuristic'] += 1
+                  log(f"    ⚡ [HEURISTIC] {filename}")
+                  return heuristic
 
-              # 2. AI Resolution
+              # 2. Safety Cap
+              block_len = len(local.splitlines()) + len(remote.splitlines())
+              if block_len > MAX_BLOCK_SIZE:
+                  STATS['skipped'] += 1
+                  log(f"    ⚠️ [SKIP] Huge Block ({block_len} lines).")
+                  return local
+
+              # 3. AI Resolution
               print(f"    🧠 [AI] Thinking...")
               prompt = f"""
-              ROLE: Expert Linux Kernel 4.14 Developer.
-              TASK: Resolve Git Conflict in '{filename}'.
+              TASK: Merge C Code.
+              FILE: {filename}
               
-              GUIDELINES:
-              1. Return ONLY the merged C code. NO Markdown.
-              2. Use TABS for indentation (Kernel Standard).
-              3. Keep Driver Logic (Local) AND Core Updates (Remote).
-              4. DO NOT include conflict markers.
-              
-              CONTEXT BEFORE ({CONTEXT_LINES} lines):
+              PRE_CONTEXT:
               {pre}
               
               <<<<<<< LOCAL
@@ -203,16 +208,23 @@ jobs:
               {remote}
               >>>>>>> REMOTE
               
-              CONTEXT AFTER ({CONTEXT_LINES} lines):
+              POST_CONTEXT:
               {post}
+              
+              INSTRUCTIONS:
+              1. Return ONLY the valid merged code.
+              2. Keep LOCAL driver logic + REMOTE core updates.
+              3. NO Markdown. NO Markers.
               """
               
               ai_sol = execute_gemini(prompt)
               
-              if ai_sol and validate_relative_syntax(ai_sol, local, filename):
+              if ai_sol and validate_syntax(ai_sol, local, filename):
+                  STATS['ai'] += 1
                   return ai_sol
               
-              print("    ☢️ [FALLBACK] Validation Failed. Keeping LOCAL.")
+              STATS['failed'] += 1
+              log(f"    ☢️ [FAIL] Validation/AI Error. Keeping LOCAL.")
               return local
 
           def process_file(filepath):
@@ -229,7 +241,7 @@ jobs:
                   if line.startswith('<<<<<<<'):
                       start = i
                       
-                      # Context Extraction
+                      # Context: Strictly 20 Lines
                       pre_ctx = "".join(lines[max(0, start-CONTEXT_LINES):start])
                       
                       local_blk, remote_blk = [], []
@@ -243,9 +255,9 @@ jobs:
                               else: remote_blk.append(lines[i])
                           i += 1
                       
-                      post_ctx = "".join(lines[i+1:min(len(lines), i+CONTEXT_LINES)])
+                      post_ctx = "".join(lines[i+1:min(len(lines), i+1+CONTEXT_LINES)])
                       
-                      print(f"🔎 Conflict: {filepath} (Line {start})")
+                      log(f"🔎 Conflict: {filepath} (Line {start})")
                       resolved = solve_conflict_block("".join(local_blk), "".join(remote_blk), pre_ctx, post_ctx, filepath)
                       new_lines.append(resolved + "\n")
                       modified = True
@@ -256,15 +268,27 @@ jobs:
               if modified:
                   with open(filepath, 'w', encoding='utf-8') as f: f.writelines(new_lines)
                   subprocess.run(["git", "add", filepath], check=True)
-                  print("    ✅ File Staged.")
 
           if __name__ == "__main__":
               if not os.path.exists("conflicts.txt"): sys.exit(0)
               with open("conflicts.txt", "r") as f:
                   files = [x.strip() for x in f if x.strip()]
-              print(f"📋 Processing {len(files)} conflicted files...")
+              
+              log(f"📋 Processing {len(files)} conflicted files...")
               for f in files:
                   if os.path.exists(f): process_file(f)
+
+              # Generate Report
+              REPORT.append("")
+              REPORT.append("## Statistics")
+              REPORT.append(f"- **Total Conflicts:** {STATS['total']}")
+              REPORT.append(f"- **AI Resolved:** {STATS['ai']}")
+              REPORT.append(f"- **Heuristic Fix:** {STATS['heuristic']}")
+              REPORT.append(f"- **Skipped (Safety):** {STATS['skipped']}")
+              REPORT.append(f"- **Failed (Fallback):** {STATS['failed']}")
+              
+              with open("TITANIUM_REPORT.md", "w") as f:
+                  f.write("\n".join(REPORT))
           EOF
           
           # Fix Python Syntax
@@ -313,12 +337,22 @@ jobs:
       - name: 🚑 Run Titanium Core
         if: steps.merge.outputs.found_conflicts == 'true'
         run: |
-          echo ">>> ENGAGING TITANIUM v15..."
+          echo ">>> ENGAGING TITANIUM v18..."
           python3 -u titanium_core.py
           rm titanium_core.py conflicts.txt
+      
+      # ========================================================
+      # PHASE 5: REPORTING & ARTIFACTS
+      # ========================================================
+      - name: 📤 Upload Titanium Report
+        if: steps.merge.outputs.found_conflicts == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: titanium-report
+          path: TITANIUM_REPORT.md
 
       # ========================================================
-      # PHASE 5: VERIFY & DEPLOY (WITH FAILSAFE)
+      # PHASE 6: VERIFY & DEPLOY (WITH FAILSAFE)
       # ========================================================
       - name: 🔒 Verify & Push
         run: |
@@ -348,7 +382,7 @@ jobs:
           fi
 
       # ========================================================
-      # PHASE 6: EMERGENCY PROTOCOLS
+      # PHASE 7: EMERGENCY PROTOCOLS
       # ========================================================
       - name: 🚨 Emergency Commit (WIP)
         if: failure()
