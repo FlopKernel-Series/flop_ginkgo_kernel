@@ -94,9 +94,7 @@ jobs:
           MODEL = os.environ.get("AI_MODEL", "gemini-2.5-flash")
           
           # --- HEX-ENCODED REGEX (SAFETY FIRST) ---
-          # Decodes to: r'^```[a-zA-Z]*
-' and r'
-```$'
+          # Decodes to: r'^```[a-zA-Z]*\n' and r'\n```$'
           # This prevents any possibility of script injection failure.
           RX_START = bytes.fromhex('5e6060605b612d7a412d5a5d2a0a').decode('utf-8')
           RX_END   = bytes.fromhex('0a60606024').decode('utf-8')
@@ -143,16 +141,15 @@ jobs:
                       next_char = text[i+1] if i + 1 < length else ''
                       
                       if in_line_comm:
-                          if char == '
-': in_line_comm = False
+                          if char == '\n': in_line_comm = False
                       elif in_blk_comm:
                           if char == '*' and next_char == '/':
                               in_blk_comm = False; i += 1
                       elif in_str:
-                          if char == '\': i += 1 # Skip escape
+                          if char == '\\': i += 1 # Skip escape
                           elif char == quote: in_str = False
                       elif in_char:
-                          if char == '\': i += 1
+                          if char == '\\': i += 1
                           elif char == quote: in_char = False
                       else:
                           # Entry points
@@ -300,14 +297,12 @@ jobs:
                                   fix = self.resolve(fpath, "".join(local_blk), "".join(remote_blk), pre, post)
                                   
                                   if fix:
-                                      new_content.append(fix + "
-")
+                                      new_content.append(fix + "\n")
                                       self.log("    ✅ Resolved.")
                                   else:
                                       self.log("    🛡️ Resolution Unsafe. Fallback to LOCAL.")
                                       new_content.append("".join(local_blk))
-                                      new_content.append(f"// TODO: SINGULARITY_SKIPPED {datetime.now()}
-")
+                                      new_content.append(f"// TODO: SINGULARITY_SKIPPED {datetime.now()}\n")
                                   
                                   modified = True
                               else:
@@ -321,8 +316,7 @@ jobs:
                       except Exception as e:
                           self.log(f"    ☠️ Fatal IO Error: {e}")
                   
-                  with open("SINGULARITY_LOG.md", "w") as f: f.write("
-".join(self.log_buffer))
+                  with open("SINGULARITY_LOG.md", "w") as f: f.write("\n".join(self.log_buffer))
 
           if __name__ == "__main__":
               SingularityAgent().execute()
@@ -433,4 +427,3 @@ jobs:
           body: "Automatic resolution failed. Manual intervention required on branch `${{ steps.merge_op.outputs.branch }}`."
           branch: ${{ steps.merge_op.outputs.branch }}
           base: ${{ inputs.target_branch }}
-          
