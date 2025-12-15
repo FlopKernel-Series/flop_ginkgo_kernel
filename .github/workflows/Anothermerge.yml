@@ -1,4 +1,4 @@
-name: 🌌 merge
+name: 🔱 merge
 
 on:
   workflow_dispatch:
@@ -16,12 +16,17 @@ on:
         required: true
         default: 'floppy-new'
       
-      ai_api_key:
-        description: 'Gemini API Key'
+      # --- INTELLIGENCE GRID ---
+      gemini_api_key:
+        description: 'Gemini API Key (Required)'
         required: true
       
-      ai_model:
-        description: 'Model ID'
+      deepseek_api_key:
+        description: 'DeepSeek API Key (Optional - Recommended)'
+        required: false
+      
+      ai_model_gemini:
+        description: 'Gemini Model'
         required: true
         default: 'gemini-2.5-flash'
         type: string
@@ -31,18 +36,19 @@ permissions:
   pull-requests: write
 
 jobs:
-  nebula_core:
+  trinity_engine:
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      AI_KEY: ${{ inputs.ai_api_key }}
-      AI_MODEL: ${{ inputs.ai_model }}
+      KEY_GEMINI: ${{ inputs.gemini_api_key }}
+      KEY_DEEPSEEK: ${{ inputs.deepseek_api_key }}
+      MODEL_GEMINI: ${{ inputs.ai_model_gemini }}
 
     steps:
       # ========================================================
-      # PHASE 1: HARDENED ENVIRONMENT
+      # PHASE 1: HARDENED INFRASTRUCTURE
       # ========================================================
-      - name: 🛡️ System Prep
+      - name: 🛡️ System Hardening
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
           sudo apt-get update -qq
@@ -56,73 +62,179 @@ jobs:
 
       - name: ⚙️ Configure Git
         run: |
-          git config --global user.name "Apex-Nebula"
+          git config --global user.name "Apex-Trinity"
           git config --global user.email "bot@floppykernel.ai"
           git config merge.renameLimit 999999
           
-          # BINARY SHIELD: Prevent text-merging of blobs
+          # BINARY SHIELD: Protect kernel blobs
           echo "* -text" > .gitattributes
           for ext in png dtb gz ko o bpf zip jpg bmp iso so a; do
             echo "*.$ext binary" >> .gitattributes
           done
 
       # ========================================================
-      # PHASE 2: INJECT "CORTEX" INTELLIGENCE ENGINE
+      # PHASE 2: INJECT "TRINITY" CORE (CORTEX + 2 AIs)
       # ========================================================
-      - name: 🧠 Inject Cortex v14.4
+      - name: 🧠 Inject Trinity Core
         run: |
-          cat << 'EOF' > cortex_engine.py
-          import sys, os, re, requests, time, subprocess
+          cat << 'EOF' > trinity_core.py
+          import sys, os, re, requests, time, json
 
-          # 1. FORCE UNBUFFERED LOGS (No Silent Deaths)
+          # REAL-TIME LOGGING
           sys.stdout.reconfigure(line_buffering=True)
 
           # --- CONFIGURATION ---
-          API_KEY = os.environ.get("AI_KEY", "").strip()
-          RAW_MODEL = os.environ.get("AI_MODEL", "gemini-2.5-flash")
-          MODEL_ID = RAW_MODEL.replace("models/", "")
+          KEY_GEMINI = os.environ.get("KEY_GEMINI", "").strip()
+          KEY_DEEPSEEK = os.environ.get("KEY_DEEPSEEK", "").strip()
+          
+          RAW_GEMINI_MODEL = os.environ.get("MODEL_GEMINI", "gemini-2.5-flash")
+          ID_GEMINI = RAW_GEMINI_MODEL.replace("models/", "")
+          ID_DEEPSEEK = "deepseek-chat" # Standard V3 Endpoint
 
-          # --- RATE LIMIT GOVERNOR ---
-          # 15 RPM = 1 request every 4s. We use 10s to be absolutely safe.
-          MIN_DELAY = 10.0 
+          # --- GOVERNOR SETTINGS ---
+          MIN_DELAY = 10.0 # Universal cooldown
           LAST_REQUEST = 0
-          MAX_RETRIES = 3
 
-          print(f">>> [SYSTEM] Cortex v14.4 Online. Model: {MODEL_ID}")
+          print(f">>> [SYSTEM] Trinity Online.")
+          print(f"    - Cortex: Active")
+          print(f"    - DeepSeek: {'Enabled' if KEY_DEEPSEEK else 'Disabled'}")
+          print(f"    - Gemini: Enabled ({ID_GEMINI})")
 
-          class CortexLogic:
-              """The 'No-AI' Heuristic Solver (Saves Tokens)."""
+          # ======================================================
+          # CLASS 1: CORTEX (THE ARCHITECT - LOCAL LOGIC)
+          # ======================================================
+          class Cortex:
+              """Deterministic Logic & Symbolic Analysis."""
+              
               @staticmethod
-              def solve(local, remote, filename):
+              def solve_math(local, remote, filename):
                   l_lines = [x.strip() for x in local.splitlines() if x.strip()]
                   r_lines = [x.strip() for x in remote.splitlines() if x.strip()]
 
-                  # 1. Lists / Gitignore / Configs (Set Union)
-                  if any(filename.endswith(x) for x in ['.gitignore', '.txt', '.conf', '.json']):
-                      print("    ⚡ [CORTEX] Merging List/Config (Union)")
+                  # 1. KERNEL VERSION (Always Upstream)
+                  if filename == 'Makefile':
+                      if any(x.startswith(('VERSION', 'PATCHLEVEL', 'SUBLEVEL')) for x in r_lines):
+                          print(f"    ⚡ [CORTEX] Kernel Version Bump -> Accepting REMOTE")
+                          return remote
+
+                  # 2. SET THEORY (Includes, Configs, Lists)
+                  if any(filename.endswith(x) for x in ['.gitignore', '.txt', '.conf', '.json']) or \
+                     all(x.startswith(('#include', 'import')) for x in l_lines + r_lines):
+                      print(f"    ⚡ [CORTEX] Set Union Merge")
                       return "\n".join(sorted(list(set(l_lines + r_lines))))
 
-                  # 2. Includes (Set Union)
-                  if all(x.startswith(('#include', 'import')) for x in l_lines + r_lines):
-                      print("    ⚡ [CORTEX] Merging Headers (Union)")
-                      return "\n".join(sorted(list(set(l_lines + r_lines))))
-
-                  # 3. Kconfig / Defconfig (Prioritize Assignments)
+                  # 3. KCONFIG / DEFCONFIG (Configuration Merge)
                   if 'Kconfig' in filename or 'defconfig' in filename:
-                      # If conflicts are purely configs, merge them
-                      if all(('=' in x or 'config ' in x or 'bool ' in x) for x in l_lines + r_lines):
-                          print("    ⚡ [CORTEX] Merging Kernel Configs")
-                          # Basic strategy: Keep both unique lines. 
-                          # If duplicate keys exist, Git conflict logic usually implies differing values.
-                          # Since we prefer LOCAL, we can just return LOCAL if keys overlap, or Union if distinct.
-                          # For safety, let's trust the AI for overlapping keys, but use Union for distinct.
-                          return None # Let AI handle value collisions to prioritize LOCAL
+                      # If purely definitions, merge unique lines
+                      if all(re.match(r'^(config|bool|default|select|menu|source)', x) or '=' in x for x in l_lines + r_lines):
+                          print("    ⚡ [CORTEX] Merging Config Definitions")
+                          return "\n".join(sorted(list(set(l_lines + r_lines))))
 
                   return None
 
-          class GeminiBridge:
               @staticmethod
-              def clean_response(text):
+              def analyze_ghost(local, remote):
+                  """Detects Deletions."""
+                  if not local.strip() and remote.strip():
+                      print(f"    👻 [CORTEX] Ghost Block (Local Deletion) -> Enforcing Deletion")
+                      return "" # Empty string
+                  return None
+
+              @staticmethod
+              def validate(text, filename):
+                  """Syntax Guard."""
+                  clean = re.sub(r'//.*', '', text)
+                  clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
+                  
+                  if any(filename.endswith(x) for x in ['.txt', '.gitignore', 'Makefile', '.mk', 'Kconfig']):
+                      return True
+                  
+                  # Check for C/DTS brace balance
+                  return clean.count('{') == clean.count('}')
+
+          # ======================================================
+          # CLASS 2: DEEPSEEK (THE CODING SPECIALIST)
+          # ======================================================
+          class DeepSeekAgent:
+              @staticmethod
+              def query(prompt):
+                  if not KEY_DEEPSEEK: return None
+                  
+                  Governor.wait()
+                  
+                  url = "https://api.deepseek.com/v1/chat/completions"
+                  headers = {"Authorization": f"Bearer {KEY_DEEPSEEK}", "Content-Type": "application/json"}
+                  data = {
+                      "model": "deepseek-chat",
+                      "messages": [
+                          {"role": "system", "content": "You are a Linux Kernel Maintainer. Output ONLY Code."},
+                          {"role": "user", "content": prompt}
+                      ],
+                      "temperature": 0.1
+                  }
+
+                  try:
+                      resp = requests.post(url, headers=headers, json=data, timeout=60)
+                      if resp.status_code == 200:
+                          raw = resp.json()['choices'][0]['message']['content']
+                          return Utility.clean_markdown(raw)
+                      elif resp.status_code == 429:
+                          print("    🛑 [DEEPSEEK] Rate Limit. Switching to Gemini...")
+                          return None
+                      else:
+                          print(f"    ⚠️ [DEEPSEEK] Error {resp.status_code}")
+                          return None
+                  except: return None
+
+          # ======================================================
+          # CLASS 3: GEMINI (THE FALLBACK GENERALIST)
+          # ======================================================
+          class GeminiAgent:
+              @staticmethod
+              def query(prompt):
+                  Governor.wait()
+                  
+                  url = f"https://generativelanguage.googleapis.com/v1beta/models/{ID_GEMINI}:generateContent?key={KEY_GEMINI}"
+                  headers = {'Content-Type': 'application/json'}
+                  data = {
+                      "contents": [{"parts": [{"text": prompt}]}],
+                      "generationConfig": {"temperature": 0.2, "maxOutputTokens": 4096}
+                  }
+
+                  # Simple Retry Logic for Gemini
+                  for i in range(2):
+                      try:
+                          resp = requests.post(url, headers=headers, json=data, timeout=60)
+                          if resp.status_code == 200:
+                              try:
+                                  return Utility.clean_markdown(resp.json()['candidates'][0]['content']['parts'][0]['text'])
+                              except: return None
+                          elif resp.status_code == 429:
+                              print(f"    🛑 [GEMINI] Rate Limit. Sleeping 60s...")
+                              time.sleep(60)
+                              continue
+                          else:
+                              print(f"    ⚠️ [GEMINI] Error {resp.status_code}")
+                              return None
+                      except: time.sleep(5)
+                  return None
+
+          # ======================================================
+          # UTILITIES
+          # ======================================================
+          class Governor:
+              @staticmethod
+              def wait():
+                  global LAST_REQUEST
+                  now = time.time()
+                  elapsed = now - LAST_REQUEST
+                  if elapsed < MIN_DELAY:
+                      time.sleep(MIN_DELAY - elapsed)
+                  LAST_REQUEST = time.time()
+
+          class Utility:
+              @staticmethod
+              def clean_markdown(text):
                   text = re.sub(r'^```[a-z]*\n', '', text, flags=re.MULTILINE)
                   text = re.sub(r'\n```$', '', text, flags=re.MULTILINE)
                   text = re.sub(r'<<<<<<< .*', '', text)
@@ -130,109 +242,10 @@ jobs:
                   text = re.sub(r'>>>>>>> .*', '', text)
                   return text.strip()
 
-              @staticmethod
-              def validate(text, filename):
-                  clean = re.sub(r'//.*', '', text)
-                  clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
-                  
-                  if any(filename.endswith(x) for x in ['.txt', '.gitignore', 'Makefile', '.mk', 'Kconfig']):
-                      return True
-                  
-                  # DTS/C Brace Check
-                  return clean.count('{') == clean.count('}')
-
-              @staticmethod
-              def query(prompt):
-                  global LAST_REQUEST
-                  
-                  # GOVERNOR: Enforce Delay
-                  now = time.time()
-                  elapsed = now - LAST_REQUEST
-                  if elapsed < MIN_DELAY:
-                      time.sleep(MIN_DELAY - elapsed)
-                  
-                  url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_ID}:generateContent?key={API_KEY}"
-                  headers = {'Content-Type': 'application/json'}
-                  data = {
-                      "contents": [{"parts": [{"text": prompt}]}],
-                      "generationConfig": {"temperature": 0.1, "maxOutputTokens": 4096}
-                  }
-
-                  for attempt in range(1, MAX_RETRIES + 1):
-                      try:
-                          resp = requests.post(url, headers=headers, json=data, timeout=60)
-                          LAST_REQUEST = time.time()
-                          
-                          if resp.status_code == 200:
-                              try:
-                                  return GeminiBridge.clean_response(resp.json()['candidates'][0]['content']['parts'][0]['text'])
-                              except: return None
-                          
-                          elif resp.status_code == 429:
-                              wait = 60 * attempt
-                              print(f"    🛑 Rate Limit (429). Penalty Box: {wait}s...")
-                              time.sleep(wait)
-                              continue
-                          
-                          elif resp.status_code >= 500:
-                              time.sleep(5); continue
-                          else:
-                              print(f"    ❌ API Error: {resp.status_code}")
-                              return None
-                      except: time.sleep(5)
-                  return None
-
-          def resolve_conflict_block(local, remote, pre, post, filename):
-              # 1. CORTEX HEURISTIC
-              heuristic = CortexLogic.solve(local, remote, filename)
-              if heuristic: return heuristic
-
-              # 2. GHOST BLOCK / REVERT DETECTION
-              # If LOCAL is empty (deleted) and REMOTE has content -> Prefer LOCAL (Deletion)
-              if not local.strip() and remote.strip():
-                  print("    🛡️ [CORTEX] Detected Revert/Deletion. Keeping LOCAL (Empty).")
-                  return ""
-
-              # 3. AI GENERATION
-              print(f"    🧠 [GEMINI] Analyzing Conflict...")
-              
-              prompt = f"""
-              ROLE: Senior Linux Kernel Maintainer.
-              TASK: Resolve Git Conflict in '{filename}'.
-              
-              CONFLICT STATE:
-              - LOCAL (My Branch): High Priority. This contains custom driver logic and reverts.
-              - REMOTE (Upstream): Updates.
-              
-              STRATEGY:
-              1. **LOCAL SUPREMACY:** If values differ (e.g., versions, flags, logic), KEEP LOCAL.
-              2. **NO RESURRECTION:** If LOCAL deleted a block (empty), DO NOT accept REMOTE's code unless it's a completely new unrelated function.
-              3. **SYNTAX:** Ensure braces {{}} match the surrounding code in PRE/POST context.
-              4. **OUTPUT:** Return ONLY the valid merged C code.
-              
-              CONTEXT BEFORE:
-              {pre}
-              
-              <<<<<<< LOCAL
-              {local}
-              =======
-              {remote}
-              >>>>>>> REMOTE
-              
-              CONTEXT AFTER:
-              {post}
-              """
-              
-              ai_res = GeminiBridge.query(prompt)
-              
-              # 4. VALIDATION
-              if ai_res and GeminiBridge.validate(ai_res, filename):
-                  return ai_res
-              
-              print("    ☢️ AI Failed/Unsafe. Enforcing LOCAL.")
-              return local
-
-          def process_file(filepath):
+          # ======================================================
+          # ORCHESTRATOR
+          # ======================================================
+          def orchestrate_merge(filepath):
               try:
                   with open(filepath, 'r', encoding='utf-8', errors='ignore') as f: lines = f.readlines()
               except: return
@@ -245,8 +258,8 @@ jobs:
                   line = lines[i]
                   if line.startswith('<<<<<<<'):
                       start = i
-                      # Context: 30 lines (Divide & Conquer Strategy)
-                      pre = "".join(lines[max(0, start-30):start])
+                      # Context: 40 Lines (Optimized)
+                      pre = "".join(lines[max(0, start-40):start])
                       
                       local_blk, remote_blk = [], []
                       mode = "local"
@@ -259,12 +272,62 @@ jobs:
                               else: remote_blk.append(lines[i])
                           i += 1
                       
-                      post = "".join(lines[i+1:min(len(lines), i+30)])
+                      post = "".join(lines[i+1:min(len(lines), i+40)])
                       
                       print(f"🔎 Analyzing: {filepath} (Line {start})")
+                      local_str = "".join(local_blk)
+                      remote_str = "".join(remote_blk)
+
+                      # --- LEVEL 1: CORTEX DETERMINISTIC ---
+                      merged = Cortex.solve_math(local_str, remote_str, filepath)
                       
-                      merged = resolve_conflict_block("".join(local_blk), "".join(remote_blk), pre, post, filepath)
-                      new_lines.append(merged + "\n")
+                      if merged is None:
+                          # --- LEVEL 2: CORTEX GHOST CHECK ---
+                          merged = Cortex.analyze_ghost(local_str, remote_str)
+
+                      if merged is None:
+                          # --- LEVEL 3: AI TRIAGE ---
+                          prompt = f"""
+                          ROLE: Senior Linux Kernel Maintainer.
+                          TASK: Merge Conflict in '{filepath}'.
+                          
+                          GUIDELINES:
+                          1. **PRIORITIZE LOCAL:** My branch has custom drivers. Keep them.
+                          2. **ADAPT REMOTE:** If Upstream made valid updates that fit, merge them.
+                          3. **SYNTAX:** Strict brace balance.
+                          
+                          CONTEXT BEFORE:
+                          {pre}
+                          <<<<<<< LOCAL
+                          {local_str}
+                          =======
+                          {remote_str}
+                          >>>>>>> REMOTE
+                          CONTEXT AFTER:
+                          {post}
+                          
+                          OUTPUT: ONLY valid code.
+                          """
+                          
+                          # Try DeepSeek First
+                          if KEY_DEEPSEEK:
+                              print(f"    🧠 [DEEPSEEK] Engaging Specialist...")
+                              merged = DeepSeekAgent.query(prompt)
+                          
+                          # If DeepSeek failed or is disabled, Try Gemini
+                          if not merged or (merged and not Cortex.validate(merged, filepath)):
+                              if merged: print("    ⚠️ [DEEPSEEK] Validation Failed.")
+                              print(f"    🧠 [GEMINI] Engaging Fallback...")
+                              merged = GeminiAgent.query(prompt)
+
+                      # --- LEVEL 4: FINAL DECISION ---
+                      if merged and Cortex.validate(merged, filepath):
+                          print("    ✅ Resolved.")
+                          new_lines.append(merged + "\n")
+                      else:
+                          print("    ☢️ ALL AIs FAILED. Enforcing LOCAL.")
+                          new_lines.append(local_str)
+
                       modified = True
                   else:
                       new_lines.append(line)
@@ -278,19 +341,19 @@ jobs:
               if not os.path.exists("conflicts.txt"):
                   print("No conflicts.")
                   sys.exit(0)
-                  
+              
               with open("conflicts.txt", "r") as f:
                   files = [x.strip() for x in f if x.strip()]
               
-              print(f"📋 Targets: {len(files)} files.")
+              print(f"📋 Mission: Fix {len(files)} files.")
               for f in files:
-                  if os.path.exists(f): process_file(f)
+                  if os.path.exists(f): orchestrate_merge(f)
           EOF
 
       # ========================================================
       # PHASE 3: STRATEGIC MERGE
       # ========================================================
-      - name: 🧬 Merge Sequence
+      - name: 🧬 Execute Strategic Merge
         id: merge
         shell: bash
         run: |
@@ -298,12 +361,12 @@ jobs:
           git fetch upstream "${{ inputs.upstream_branch }}" --no-tags
           
           TS=$(date +%s)
-          TMP="nebula-$TS"
+          TMP="trinity-$TS"
           git checkout -b "$TMP" "origin/${{ inputs.target_branch }}"
           echo "branch=$TMP" >> $GITHUB_OUTPUT
 
-          # SUBMODULE CLEANUP (Prevents Dirty Index)
-          echo "🧹 Unstaging toolchains..."
+          # SUBMODULE CLEANUP
+          echo "🧹 Sanitizing Index..."
           git rm -r --cached toolchains > /dev/null 2>&1 || true
 
           echo ">>> Executing Merge..."
@@ -319,7 +382,7 @@ jobs:
           
           if [ "$COUNT" -gt "0" ]; then
              echo "has_conflicts=true" >> $GITHUB_OUTPUT
-             echo "⚠️ Conflicts: $COUNT"
+             echo "⚠️ Conflicts Detected: $COUNT"
              cat conflicts.txt
           else
              echo "has_conflicts=false" >> $GITHUB_OUTPUT
@@ -327,18 +390,20 @@ jobs:
           fi
 
       # ========================================================
-      # PHASE 4: EXECUTION & VERIFICATION
+      # PHASE 4: EXECUTION
       # ========================================================
-      - name: 🚑 Engage Nebula
+      - name: 🚑 Engage Trinity
         if: steps.merge.outputs.has_conflicts == 'true'
         run: |
-          echo ">>> Starting Cortex Engine..."
-          python3 -u cortex_engine.py
-          rm cortex_engine.py conflicts.txt
+          echo ">>> Starting Trinity Engine..."
+          python3 -u trinity_core.py
+          rm trinity_core.py conflicts.txt
 
-      - name: 🔒 Finalize
+      # ========================================================
+      # PHASE 5: FINALIZE
+      # ========================================================
+      - name: 🔒 Commit & Push
         run: |
-          # 1. MARKER SWEEP
           if grep -r "<<<<<<< HEAD" . --exclude-dir=.github; then
              echo "⚠️ Cleaning markers..."
              grep -r -l "<<<<<<< HEAD" . | xargs sed -i '/<<<<<<< HEAD/d'
@@ -346,20 +411,18 @@ jobs:
              grep -r -l ">>>>>>>" . | xargs sed -i '/>>>>>>>/d'
           fi
 
-          # 2. INDEX CHECK
           if [[ -n $(git diff --name-only --diff-filter=U) ]]; then
              echo "❌ CRITICAL: Unmerged files."
              exit 1
           fi
 
-          # 3. COMMIT
           git add .
           git reset HEAD toolchains > /dev/null 2>&1 || true
           
           if git diff-index --quiet HEAD --; then
              echo "⚠️ No changes."
           else
-             git commit -m "Nebula: Smart Merge (${{ inputs.ai_model }})"
+             git commit -m "Trinity: Tri-Core Merge (${{ inputs.ai_model }})"
              
              TARGET="${{ inputs.target_branch }}"
              BRANCH="${{ steps.merge.outputs.branch }}"
@@ -381,7 +444,7 @@ jobs:
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          title: "❌ Nebula Merge Failed"
+          title: "❌ Trinity Merge Failed"
           body: "Manual intervention required on branch `${{ steps.merge.outputs.branch }}`."
           branch: ${{ steps.merge.outputs.branch }}
           base: ${{ inputs.target_branch }}
