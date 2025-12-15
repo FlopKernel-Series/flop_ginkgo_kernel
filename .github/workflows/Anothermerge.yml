@@ -1,4 +1,4 @@
-name: 🔱 merge
+name: 🔱 3 pointy ahh merge
 
 on:
   workflow_dispatch:
@@ -16,13 +16,12 @@ on:
         required: true
         default: 'floppy-new'
       
-      # --- INTELLIGENCE GRID ---
       gemini_api_key:
         description: 'Gemini API Key (Required)'
         required: true
       
       deepseek_api_key:
-        description: 'DeepSeek API Key (Optional - Recommended)'
+        description: 'DeepSeek API Key (Optional)'
         required: false
       
       ai_model_gemini:
@@ -66,19 +65,19 @@ jobs:
           git config --global user.email "bot@floppykernel.ai"
           git config merge.renameLimit 999999
           
-          # BINARY SHIELD: Protect kernel blobs
+          # BINARY SHIELD
           echo "* -text" > .gitattributes
           for ext in png dtb gz ko o bpf zip jpg bmp iso so a; do
             echo "*.$ext binary" >> .gitattributes
           done
 
       # ========================================================
-      # PHASE 2: INJECT "TRINITY" CORE (CORTEX + 2 AIs)
+      # PHASE 2: INJECT "TRINITY" CORE
       # ========================================================
       - name: 🧠 Inject Trinity Core
         run: |
           cat << 'EOF' > trinity_core.py
-          import sys, os, re, requests, time, json
+          import sys, os, re, requests, time, json, subprocess
 
           # REAL-TIME LOGGING
           sys.stdout.reconfigure(line_buffering=True)
@@ -89,10 +88,10 @@ jobs:
           
           RAW_GEMINI_MODEL = os.environ.get("MODEL_GEMINI", "gemini-2.5-flash")
           ID_GEMINI = RAW_GEMINI_MODEL.replace("models/", "")
-          ID_DEEPSEEK = "deepseek-chat" # Standard V3 Endpoint
+          ID_DEEPSEEK = "deepseek-chat" 
 
           # --- GOVERNOR SETTINGS ---
-          MIN_DELAY = 10.0 # Universal cooldown
+          MIN_DELAY = 10.0 
           LAST_REQUEST = 0
 
           print(f">>> [SYSTEM] Trinity Online.")
