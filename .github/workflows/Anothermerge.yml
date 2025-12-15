@@ -1,4 +1,4 @@
-name: ⚙️ merge
+name: 🌌 merge
 
 on:
   workflow_dispatch:
@@ -16,21 +16,21 @@ on:
         required: true
         default: 'floppy-new'
       
-      # --- INTELLIGENCE KEYS ---
+      # --- INTELLIGENCE GRID ---
       gemini_api_key:
-        description: 'Gemini API Key (Required - Free Tier)'
+        description: 'Gemini API Key (Required - Free)'
         required: true
-      
-      deepseek_api_key:
-        description: 'DeepSeek API Key (Optional - Coding Specialist)'
-        required: false
       
       openai_api_key:
         description: 'OpenAI API Key (Optional - Generalist)'
         required: false
-        
-      ai_model_gemini:
-        description: 'Gemini Model ID'
+      
+      deepseek_api_key:
+        description: 'DeepSeek API Key (Optional - Specialist)'
+        required: false
+      
+      ai_model:
+        description: 'Gemini Model'
         required: true
         default: 'gemini-2.5-flash'
         type: string
@@ -40,128 +40,119 @@ permissions:
   pull-requests: write
 
 jobs:
-  trinity_core:
+  horizon_engine:
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       KEY_GEMINI: ${{ inputs.gemini_api_key }}
-      KEY_DEEPSEEK: ${{ inputs.deepseek_api_key }}
       KEY_OPENAI: ${{ inputs.openai_api_key }}
-      MODEL_GEMINI: ${{ inputs.ai_model_gemini }}
+      KEY_DEEPSEEK: ${{ inputs.deepseek_api_key }}
+      MODEL_GEMINI: ${{ inputs.ai_model }}
 
     steps:
       # ========================================================
-      # PHASE 1: HARDENED PREP
+      # PHASE 1: HARDENING
       # ========================================================
-      - name: 🛡️ System Hardening
+      - name: 🛡️ System Prep
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends git python3-pip python3-requests
           pip3 install requests
 
-      - name: 📥 Checkout Source
+      - name: 📥 Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: ⚙️ Configure Git
         run: |
-          git config --global user.name "Apex-Auto"
+          git config --global user.name "Apex-Horizon"
           git config --global user.email "bot@floppykernel.ai"
           git config merge.renameLimit 999999
           
-          # BINARY SHIELD: Protect blobs
+          # BINARY SHIELD
           echo "* -text" > .gitattributes
           for ext in png dtb gz ko o bpf zip jpg bmp iso so a; do
             echo "*.$ext binary" >> .gitattributes
           done
 
       # ========================================================
-      # PHASE 2: INJECT TRINITY ENGINE (ADAPTIVE GOVERNOR)
+      # PHASE 2: INJECT HORIZON CORE
       # ========================================================
-      - name: 🧠 Inject Intelligence Core
+      - name: 🧠 Inject Horizon Engine
         run: |
-          cat << 'EOF' > trinity_core.py
-          import sys, os, re, requests, time, subprocess
+          cat << 'EOF' > horizon.py
+          import sys, os, re, requests, time, subprocess, json
 
-          # 1. FORCE UNBUFFERED LOGS (Fixes "Silent Death")
+          # 1. FORCE UNBUFFERED OUTPUT (CRITICAL)
           sys.stdout.reconfigure(line_buffering=True)
 
-          # --- CONFIGURATION ---
+          # --- CONFIG ---
           KEYS = {
               "gemini": os.environ.get("KEY_GEMINI", "").strip(),
+              "openai": os.environ.get("KEY_OPENAI", "").strip(),
               "deepseek": os.environ.get("KEY_DEEPSEEK", "").strip(),
-              "openai": os.environ.get("KEY_OPENAI", "").strip()
           }
           
-          RAW_GEMINI = os.environ.get("MODEL_GEMINI", "gemini-2.5-flash")
-          ID_GEMINI = RAW_GEMINI.replace("models/", "")
+          GEMINI_ID = os.environ.get("MODEL_GEMINI", "gemini-2.5-flash").replace("models/", "")
           
-          # --- ADAPTIVE TOKEN BUCKET SETTINGS ---
-          # Gemini Free Tier Strategy: 
-          # We assume a safe refill rate of ~400 chars per second (conservative).
-          # If we send 4000 chars, we sleep 10s. If 800 chars, sleep 2s.
-          SAFE_REFILL_RATE_CHARS_PER_SEC = 400 
-          MIN_SLEEP_FLOOR = 3.0 # Minimum cooldown no matter how small
+          # --- TOKEN PHYSICS (The "Zero 429" Math) ---
+          # Safe Processing Rate for Free Tier: ~100 Characters per Second refill rate.
+          # If we treat it slower, we never crash.
+          REFILL_RATE = 80.0 
+          MIN_SLEEP = 5.0
 
-          print(f">>> [SYSTEM] v24.0 Adaptive Core Online.")
-          print(f"    - Gemini Model: {ID_GEMINI}")
+          print(f">>> [SYSTEM] Horizon v25.0 Online.")
+          print(f"    - Gemini: {GEMINI_ID}")
+          print(f"    - DeepSeek: {'Active' if KEYS['deepseek'] else 'Disabled'}")
+          print(f"    - OpenAI: {'Active' if KEYS['openai'] else 'Disabled'}")
 
-          class AdaptiveGovernor:
-              """Calculates sleep time based on payload size (Token Weight)."""
+          # ======================================================
+          # CLASS: CORTEX (LOGIC GATE)
+          # ======================================================
+          class Cortex:
               @staticmethod
-              def pace(payload_text):
-                  char_count = len(payload_text)
-                  # Calculate required refill time
-                  wait_time = (char_count / SAFE_REFILL_RATE_CHARS_PER_SEC)
-                  # Ensure floor
-                  final_wait = max(MIN_SLEEP_FLOOR, wait_time)
-                  
-                  # Cap at 60s max to prevent stalling
-                  final_wait = min(60.0, final_wait)
-                  
-                  print(f"    ⏳ Adaptive Governor: {char_count} chars -> Sleeping {final_wait:.1f}s...")
-                  time.sleep(final_wait)
-
-          class CortexLogic:
-              """Deterministic Logic (Cost: 0 Tokens)."""
-              @staticmethod
-              def solve(local, remote, filename):
+              def solve_heuristics(local, remote, filename):
                   l_lines = [x.strip() for x in local.splitlines() if x.strip()]
                   r_lines = [x.strip() for x in remote.splitlines() if x.strip()]
 
-                  # 1. Kernel Version Bump (Always Remote)
+                  # 1. Version Bumps (Makefile)
                   if filename == 'Makefile':
                       if any(x.startswith(('VERSION', 'PATCHLEVEL', 'SUBLEVEL')) for x in r_lines):
-                          print(f"    ⚡ [CORTEX] Kernel Version Bump -> Accepting REMOTE")
+                          print(f"    ⚡ [CORTEX] Version Bump -> Upstream")
                           return remote
                       if all('+=' in x for x in l_lines + r_lines):
-                          print(f"    ⚡ [CORTEX] Makefile Append -> Merge")
+                          print(f"    ⚡ [CORTEX] Additive Map -> Merge")
                           return local + "\n" + remote
 
-                  # 2. Set Union (Lists, Configs)
+                  # 2. Set Union (Lists, Includes)
                   if any(filename.endswith(x) for x in ['.gitignore', '.txt', '.conf', '.json']) or \
                      all(x.startswith(('#include', 'import')) for x in l_lines + r_lines):
-                      print(f"    ⚡ [CORTEX] Set Union Merge")
+                      print(f"    ⚡ [CORTEX] Set Union -> Merge")
                       return "\n".join(sorted(list(set(l_lines + r_lines))))
 
-                  # 3. Kconfig
-                  if 'Kconfig' in filename:
+                  # 3. Kconfig / Defconfig
+                  if 'Kconfig' in filename or 'defconfig' in filename:
+                      # If lines are definitions, merge them
                       if all(re.match(r'^(config|bool|default|select|menu|source)', x) or '=' in x for x in l_lines + r_lines):
-                          print("    ⚡ [CORTEX] Merging Config Definitions")
-                          return "\n".join(sorted(list(set(l_lines + r_lines))))
+                          print("    ⚡ [CORTEX] Configuration -> Merge")
+                          merged_set = set(l_lines + r_lines)
+                          # Sort implies grouping similar configs
+                          return "\n".join(sorted(list(merged_set)))
+
                   return None
 
               @staticmethod
               def validate(text, filename):
                   clean = re.sub(r'//.*', '', text)
                   clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
-                  
                   if any(filename.endswith(x) for x in ['.txt', '.gitignore', 'Makefile', '.mk', 'Kconfig']): return True
-                  
                   return clean.count('{') == clean.count('}')
 
+          # ======================================================
+          # CLASS: OMNI CLIENT
+          # ======================================================
           class OmniClient:
               @staticmethod
               def clean(text):
@@ -170,116 +161,211 @@ jobs:
                   return text.strip()
 
               @staticmethod
-              def call(provider, prompt):
-                  # APPLY ADAPTIVE PACING BEFORE REQUEST
-                  AdaptiveGovernor.pace(prompt)
-                  
-                  key = KEYS.get(provider)
-                  if not key: return None
+              def calculate_sleep(prompt_len):
+                  # Dynamic Weight Calculation
+                  wait = (prompt_len / REFILL_RATE) + MIN_SLEEP
+                  wait = min(wait, 90.0) # Cap at 90s
+                  return wait
 
+              @staticmethod
+              def call_deepseek(prompt):
+                  if not KEYS["deepseek"]: return None
                   try:
-                      # --- DEEPSEEK ---
-                      if provider == "deepseek":
-                          resp = requests.post(
-                              "https://api.deepseek.com/v1/chat/completions",
-                              headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                              json={"model": "deepseek-chat", "messages": [{"role":"user", "content":prompt}], "temperature":0.1},
-                              timeout=60
-                          )
-                          if resp.status_code == 200:
-                              return OmniClient.clean(resp.json()['choices'][0]['message']['content'])
-                          elif resp.status_code == 402:
-                              print("    ❌ DeepSeek: Out of Credits.")
-                              KEYS["deepseek"] = "" # Disable for session
-
-                      # --- OPENAI ---
-                      elif provider == "openai":
-                          resp = requests.post(
-                              "https://api.openai.com/v1/chat/completions",
-                              headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                              json={"model": "gpt-4o-mini", "messages": [{"role":"user", "content":prompt}], "temperature":0.1},
-                              timeout=60
-                          )
-                          if resp.status_code == 200:
-                              return OmniClient.clean(resp.json()['choices'][0]['message']['content'])
-
-                      # --- GEMINI ---
-                      elif provider == "gemini":
-                          url = f"https://generativelanguage.googleapis.com/v1beta/models/{ID_GEMINI}:generateContent?key={key}"
-                          for attempt in range(2):
-                              resp = requests.post(
-                                  url, headers={'Content-Type': 'application/json'},
-                                  json={"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.2}},
-                                  timeout=60
-                              )
-                              if resp.status_code == 200:
-                                  return OmniClient.clean(resp.json()['candidates'][0]['content']['parts'][0]['text'])
-                              elif resp.status_code == 429:
-                                  # If we hit 429 despite adaptive pacing, double down on sleep
-                                  print("    🛑 Gemini Burst Limit. Forced Sleep 60s...")
-                                  time.sleep(60)
-                                  continue
-                              break
-                  except Exception as e:
-                      print(f"    ⚠️ {provider.upper()} Error: {e}")
-                  
+                      resp = requests.post(
+                          "https://api.deepseek.com/v1/chat/completions",
+                          headers={"Authorization": f"Bearer {KEYS['deepseek']}", "Content-Type": "application/json"},
+                          json={"model": "deepseek-chat", "messages": [{"role":"user", "content":prompt}], "temperature":0.1},
+                          timeout=60
+                      )
+                      if resp.status_code == 200: return OmniClient.clean(resp.json()['choices'][0]['message']['content'])
+                      elif resp.status_code == 402: 
+                          print("    ❌ DeepSeek: Insufficient Funds. Disabling.")
+                          KEYS["deepseek"] = "" # Disable globally
+                  except: pass
                   return None
 
-          def solve_conflict(filepath):
-              try:
-                  with open(filepath, 'r', encoding='utf-8', errors='ignore') as f: lines = f.readlines()
-              except: return
+              @staticmethod
+              def call_openai(prompt):
+                  if not KEYS["openai"]: return None
+                  try:
+                      resp = requests.post(
+                          "https://api.openai.com/v1/chat/completions",
+                          headers={"Authorization": f"Bearer {KEYS['openai']}", "Content-Type": "application/json"},
+                          json={"model": "gpt-4o-mini", "messages": [{"role":"user", "content":prompt}], "temperature":0.1},
+                          timeout=60
+                      )
+                      if resp.status_code == 200: return OmniClient.clean(resp.json()['choices'][0]['message']['content'])
+                  except: pass
+                  return None
 
-              new_lines = []
-              i = 0
-              modified = False
-              
-              while i < len(lines):
-                  line = lines[i]
-                  if line.startswith('<<<<<<<'):
-                      start = i
-                      
-                      # Context Strategy: 
-                      # Reduce context to 40 lines (usually enough) to keep Token Weight low.
-                      pre_raw = "".join(lines[max(0, start-40):start])
-                      pre = pre_raw[-2500:] # Hard CAP on chars
-                      
-                      local_blk, remote_blk = [], []
-                      mode = "local"
-                      i += 1
-                      while i < len(lines):
-                          if lines[i].startswith('======='): mode = "remote"
-                          elif lines[i].startswith('>>>>>>>'): break
-                          else:
-                              if mode == "local": local_blk.append(lines[i])
-                              else: remote_blk.append(lines[i])
+              @staticmethod
+              def call_gemini(prompt):
+                  # SAFETY SLEEP BEFORE REQUEST
+                  sleep_duration = OmniClient.calculate_sleep(len(prompt))
+                  print(f"    ⏱️ Token Cost: {len(prompt)} chars. Pacing for {sleep_duration:.1f}s...")
+                  time.sleep(sleep_duration)
+
+                  url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_ID}:generateContent?key={KEYS['gemini']}"
+                  
+                  for i in range(2):
+                      try:
+                          resp = requests.post(
+                              url, headers={'Content-Type': 'application/json'},
+                              json={"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.2, "maxOutputTokens": 4096}},
+                              timeout=60
+                          )
+                          if resp.status_code == 200:
+                              return OmniClient.clean(resp.json()['candidates'][0]['content']['parts'][0]['text'])
+                          elif resp.status_code == 429:
+                              print(f"    🛑 Gemini 429. Burst protection sleep (60s)...")
+                              time.sleep(60)
+                              continue
+                      except: time.sleep(5)
+                  return None
+
+          # ======================================================
+          # MANAGER
+          # ======================================================
+          def engine():
+              if not os.path.exists("conflicts.txt"):
+                  print("✅ No conflicts files found.")
+                  return
+
+              with open("conflicts.txt", "r") as f:
+                  files = [x.strip() for x in f if x.strip()]
+
+              conflict_queue = []
+
+              # --- PHASE 1: CORTEX ANALYSIS ---
+              print(f"\n🚀 PHASE 1: CORTEX ANALYSIS ({len(files)} files)")
+              for filepath in files:
+                  if not os.path.exists(filepath): continue
+                  
+                  try:
+                      with open(filepath, 'r', encoding='utf-8', errors='ignore') as f: lines = f.readlines()
+                  except: continue
+
+                  new_lines = []
+                  file_solved_by_cortex = True # Assume innocent until proven guilty
+                  i = 0
+                  
+                  while i < len(lines):
+                      if lines[i].startswith('<<<<<<<'):
+                          start = i
+                          pre_raw = "".join(lines[max(0, start-40):start])
+                          local_blk, remote_blk = [], []
+                          mode = "local"
                           i += 1
-                      
-                      post_raw = "".join(lines[i+1:min(len(lines), i+40)])
-                      post = post_raw[:2500] # Hard CAP
-                      
-                      local_str = "".join(local_blk)
-                      remote_str = "".join(remote_blk)
-                      
-                      print(f"🔎 Conflict: {filepath} (Line {start})")
+                          while i < len(lines):
+                              if lines[i].startswith('======='): mode = "remote"
+                              elif lines[i].startswith('>>>>>>>'): break
+                              else:
+                                  if mode == "local": local_blk.append(lines[i])
+                                  else: remote_blk.append(lines[i])
+                              i += 1
+                          
+                          post_raw = "".join(lines[i+1:min(len(lines), i+40)])
+                          
+                          local_str = "".join(local_blk)
+                          remote_str = "".join(remote_blk)
 
-                      # 1. CORTEX HEURISTIC
-                      merged = CortexLogic.solve(local_str, remote_str, filepath)
-                      
-                      # 2. GHOST DETECT (Deletion)
-                      if merged is None and not local_str.strip() and remote_str.strip():
-                          print("    👻 [CORTEX] Detected Deletion -> Preserving")
-                          merged = ""
+                          # Try Cortex
+                          merged = Cortex.solve_heuristics(local_str, remote_str, filepath)
+                          
+                          if merged is None and not local_str.strip() and remote_str.strip():
+                              print(f"    👻 [CORTEX] {filepath}: Deletion Detected -> SOLVED")
+                              merged = ""
+                          
+                          if merged is not None:
+                              print(f"    ⚡ [CORTEX] {filepath}: Logical Match -> SOLVED")
+                              new_lines.append(merged + "\n")
+                          else:
+                              # Logic failed, needs AI
+                              file_solved_by_cortex = False
+                              # Save data for Phase 2
+                              conflict_queue.append({
+                                  "file": filepath,
+                                  "local": local_str,
+                                  "remote": remote_str,
+                                  "pre": pre_raw,
+                                  "post": post_raw,
+                                  "marker_start": start
+                              })
+                              # Add placeholder (will be replaced in Phase 2)
+                              new_lines.append(f"<<<<<<< PENDING_AI_PHASE_2 >>>>>>>\n")
+                      else:
+                          new_lines.append(lines[i])
+                      i += 1
+                  
+                  # If fully solved, write it now
+                  if file_solved_by_cortex and new_lines:
+                      with open(filepath, 'w', encoding='utf-8') as f: f.writelines(new_lines)
+                      subprocess.run(["git", "add", filepath], check=True)
 
-                      # 3. AI TRIAGE (Priority Queue)
-                      if merged is None:
+              # --- PHASE 2: AI SURGERY ---
+              if not conflict_queue:
+                  print("✅ All conflicts solved by Cortex.")
+                  return
+
+              print(f"\n🧠 PHASE 2: AI SURGERY ({len(conflict_queue)} blocks pending)")
+              
+              # Group by file to minimize IO
+              from collections import defaultdict
+              file_groups = defaultdict(list)
+              for item in conflict_queue:
+                  file_groups[item['file']].append(item)
+
+              for fname, blocks in file_groups.items():
+                  # Re-read the file (which currently has placeholders)
+                  # In a complex scenario, we'd keep it in memory, but for safety we re-read/write
+                  # Actually, simplest is to re-construct based on original read logic logic, 
+                  # but since we didn't save line numbers relative to new file...
+                  # BETTER STRATEGY: Process file-by-file linearly in Phase 2.
+                  pass 
+              
+              # ACTUAL STRATEGY FOR PHASE 2:
+              # We re-scan the files that failed Phase 1. 
+              # Since Phase 1 didn't write them if they failed, they still have git markers.
+              # Simple and Robust.
+              
+              seen_files = set(item['file'] for item in conflict_queue)
+              
+              for filepath in seen_files:
+                  print(f"  📂 Processing Complex File: {filepath}")
+                  try:
+                      with open(filepath, 'r', encoding='utf-8', errors='ignore') as f: lines = f.readlines()
+                  except: continue
+
+                  final_lines = []
+                  i = 0
+                  
+                  while i < len(lines):
+                      if lines[i].startswith('<<<<<<<'):
+                          start = i
+                          pre = "".join(lines[max(0, start-40):start])[-2000:]
+                          local_blk, remote_blk = [], []
+                          mode = "local"
+                          i += 1
+                          while i < len(lines):
+                              if lines[i].startswith('======='): mode = "remote"
+                              elif lines[i].startswith('>>>>>>>'): break
+                              else:
+                                  if mode == "local": local_blk.append(lines[i])
+                                  else: remote_blk.append(lines[i])
+                              i += 1
+                          
+                          post = "".join(lines[i+1:min(len(lines), i+40)])[:2000]
+                          local_str = "".join(local_blk)
+                          remote_str = "".join(remote_blk)
+
+                          # AI Prompt
                           prompt = f"""
                           ROLE: Senior Linux Kernel Dev.
                           TASK: Merge Conflict in '{filepath}'.
                           RULES:
-                          1. **LOCAL SUPREMACY:** My branch (LOCAL) contains custom drivers/optimizations. PRESERVE IT.
-                          2. **ADAPT REMOTE:** If Upstream updated syntax/versions, apply it IF it works with LOCAL.
-                          3. **SYNTAX:** Strict brace balance.
+                          1. **LOCAL SUPREMACY:** Keep my driver/logic (LOCAL) if it conflicts with upstream.
+                          2. **ADAPT:** If upstream (REMOTE) assumes code that LOCAL deleted, discard REMOTE.
+                          3. **SYNTAX:** Brace balance.
                           
                           CONTEXT BEFORE:
                           {pre}
@@ -293,53 +379,40 @@ jobs:
                           
                           OUTPUT: VALID C CODE ONLY.
                           """
+
+                          merged = None
                           
-                          # A. Try DeepSeek (Specialist)
-                          if KEYS["deepseek"]:
+                          # 1. Specialist (DeepSeek)
+                          if KEYS["deepseek"]: 
                               print("    🧠 Asking DeepSeek...")
-                              merged = OmniClient.call("deepseek", prompt)
+                              merged = OmniClient.call_deepseek(prompt)
                           
-                          # B. Try OpenAI (Generalist)
-                          if (not merged) and KEYS["openai"]:
+                          # 2. Generalist (OpenAI)
+                          if not merged and KEYS["openai"]:
                               print("    🧠 Asking OpenAI...")
-                              merged = OmniClient.call("openai", prompt)
-
-                          # C. Try Gemini (Infinite Fallback)
+                              merged = OmniClient.call_openai(prompt)
+                          
+                          # 3. Fallback (Gemini)
                           if not merged:
-                              print(f"    🧠 Asking Gemini...")
-                              merged = OmniClient.call("gemini", prompt)
+                              print("    🧠 Asking Gemini...")
+                              merged = OmniClient.call_gemini(prompt)
 
-                      # 4. DECISION & VALIDATION
-                      if merged is not None:
-                          # Run simplistic validation
-                          if CortexLogic.validate(merged, filepath):
+                          if merged and Cortex.validate(merged, filepath):
                               print("    ✅ Resolved.")
-                              new_lines.append(merged + "\n")
+                              final_lines.append(merged + "\n")
                           else:
-                              print("    ⚠️ AI Syntax Check Failed (Unbalanced). Enforcing LOCAL.")
-                              new_lines.append(local_str)
+                              print("    ☢️ Validation Failed. Enforcing LOCAL.")
+                              final_lines.append(local_str)
+                          
                       else:
-                          print("    ☢️ ALL FAILED. Enforcing LOCAL.")
-                          new_lines.append(local_str)
-
-                      modified = True
-                  else:
-                      new_lines.append(line)
-                  i += 1
-
-              if modified:
-                  with open(filepath, 'w', encoding='utf-8') as f: f.writelines(new_lines)
+                          final_lines.append(lines[i])
+                      i += 1
+                  
+                  with open(filepath, 'w', encoding='utf-8') as f: f.writelines(final_lines)
                   subprocess.run(["git", "add", filepath], check=True)
 
           if __name__ == "__main__":
-              if not os.path.exists("conflicts.txt"):
-                  sys.exit(0)
-              with open("conflicts.txt", "r") as f:
-                  files = [x.strip() for x in f if x.strip()]
-              
-              print(f"📋 Mission: Fix {len(files)} files.")
-              for f in files:
-                  if os.path.exists(f): solve_conflict(f)
+              engine()
           EOF
 
       # ========================================================
@@ -353,11 +426,10 @@ jobs:
           git fetch upstream "${{ inputs.upstream_branch }}" --no-tags
           
           TS=$(date +%s)
-          TMP="trinity-$TS"
+          TMP="horizon-$TS"
           git checkout -b "$TMP" "origin/${{ inputs.target_branch }}"
           echo "branch=$TMP" >> $GITHUB_OUTPUT
 
-          # CLEAN INDEX
           echo "🧹 Sanitizing Index..."
           git rm -r --cached toolchains > /dev/null 2>&1 || true
 
@@ -384,12 +456,12 @@ jobs:
       # ========================================================
       # PHASE 4: EXECUTION
       # ========================================================
-      - name: 🚑 Engage Trinity
+      - name: 🚑 Engage Horizon
         if: steps.merge.outputs.has_conflicts == 'true'
         run: |
-          echo ">>> Starting Trinity Engine (Adaptive Mode)..."
-          python3 -u trinity_core.py
-          rm trinity_core.py conflicts.txt
+          echo ">>> Starting Horizon Engine..."
+          python3 -u horizon.py
+          rm horizon.py conflicts.txt
 
       # ========================================================
       # PHASE 5: FINALIZE
@@ -414,11 +486,10 @@ jobs:
           if git diff-index --quiet HEAD --; then
              echo "⚠️ No changes."
           else
-             git commit -m "Trinity: Auto-Merge (${{ inputs.ai_model }})"
-             
+             git commit -m "Horizon: Omni-Phase Merge (${{ inputs.ai_model }})"
              TARGET="${{ inputs.target_branch }}"
              BRANCH="${{ steps.merge.outputs.branch }}"
-             
+
              git repack -a -d
              for i in {1..5}; do
                 if git push origin "$BRANCH:refs/heads/$TARGET"; then
@@ -436,7 +507,7 @@ jobs:
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          title: "❌ Trinity Merge Failed"
+          title: "❌ Horizon Merge Failed"
           body: "Manual intervention required on branch `${{ steps.merge.outputs.branch }}`."
           branch: ${{ steps.merge.outputs.branch }}
           base: ${{ inputs.target_branch }}
