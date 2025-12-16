@@ -1991,27 +1991,32 @@ jobs:
       - name: "🚨 Create Emergency Issue"
         uses: actions/github-script@v6
         if: ${{ inputs.create_recovery_pr == 'true' }}
+        env:
+          PREFLIGHT_RESULT: ${{ needs.preflight_validation.result }}
+          MERGE_BRANCH: ${{ needs.execute_merge.outputs.merge_branch || 'N/A' }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
         with:
           script: |
+            const failedJob = process.env.PREFLIGHT_RESULT === 'failure' ? 'preflight_validation' : 'execute_merge';
             const { data: issue } = await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `🚨 Horizon Merge Failed: ${context.workflow} #${context.runNumber}`,
-              body: `## Automated Merge Failure\n\n` +
-                    `The Horizon AI Merge Engine failed during execution.\n\n` +
-                    `**Workflow:** ${context.workflow} #${context.runNumber}\n` +
-                    `**Run ID:** ${context.runId}\n` +
-                    `**Branch:** ${'${{ inputs.target_branch }}'}\n` +
-                    `**Failed Job:** ${process.env.PREFLIGHT_RESULT === 'failure' ? 'preflight_validation' : 'execute_merge'}\n\n` +
-                    `[View workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})\n\n` +
-                    `## Recovery Information\n` +
-                    `- Merge branch: \`${'${{ needs.execute_merge.outputs.merge_branch || \"N/A\" }}'}\`\n` +
-                    `- Check logs for detailed error analysis\n` +
-                    `- Manual intervention required`,
-              labels: ['merge-failure', 'needs-triage', 'emergency'],
-              assignees: [context.actor]
-            });
-            console.log(`Created issue #${issue.number}`);
+         owner: context.repo.owner,
+        repo: context.repo.repo,
+        title: `🚨 Horizon Merge Failed: ${context.workflow} #${context.runNumber}`,
+        body: `## Automated Merge Failure\n\n` +
+               `The Horizon AI Merge Engine failed during execution.\n\n` +
+              `**Workflow:** ${context.workflow} #${context.runNumber}\n` +
+              `**Run ID:** ${context.runId}\n` +
+              `**Branch:** ${process.env.TARGET_BRANCH}\n` +
+              `**Failed Job:** ${failedJob}\n\n` +
+              `[View workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})\n\n` +
+              `## Recovery Information\n` +
+              `- Merge branch: \`${process.env.MERGE_BRANCH}\`\n` +
+              `- Check logs for detailed error analysis\n` +
+              `- Manual intervention required`,
+        labels: ['merge-failure', 'needs-triage', 'emergency'],
+        assignees: [context.actor]
+      });
+      console.log(`Created issue #${issue.number}`);
       
       - name: "📤 Upload Debug Artifacts"
         if: always()
