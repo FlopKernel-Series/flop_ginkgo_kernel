@@ -270,7 +270,7 @@ jobs:
   # ---------------------------------------------------------------------
   merge:
     name: "⚡ Execute Merge"
-    runs-on: ubuntu-latest-4core
+    runs-on: ubuntu-latest
     needs: preflight
     if: ${{ needs.preflight.outputs.passed == 'true' && needs.preflight.outputs.merge_viable == 'true' }}
     timeout-minutes: 45
