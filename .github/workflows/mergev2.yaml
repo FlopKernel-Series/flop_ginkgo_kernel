@@ -2002,7 +2002,7 @@ jobs:
                     `**Workflow:** ${context.workflow} #${context.runNumber}\n` +
                     `**Run ID:** ${context.runId}\n` +
                     `**Branch:** ${'${{ inputs.target_branch }}'}\n` +
-                    `**Failed Job:** ${'${{ needs.preflight_validation.result == \"failure\" && \"preflight_validation\" || \"execute_merge\" }}'}\n\n` +
+                    `**Failed Job:** ${process.env.PREFLIGHT_RESULT === 'failure' ? 'preflight_validation' : 'execute_merge'}\n\n` +
                     `[View workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})\n\n` +
                     `## Recovery Information\n` +
                     `- Merge branch: \`${'${{ needs.execute_merge.outputs.merge_branch || \"N/A\" }}'}\`\n` +
