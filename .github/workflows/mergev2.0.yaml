@@ -1,0 +1,752 @@
+name: "🤖 HORIZON - AI-Powered Kernel Merge"
+
+on:
+  workflow_dispatch:
+    inputs:
+      # === MERGE CONFIGURATION ===
+      upstream_repo:
+        description: "Upstream Repository URL"
+        required: true
+        default: "https://github.com/neophyteprjkt/kernel_xiaomi_ginkgo.git"
+      upstream_branch:
+        description: "Upstream Branch"
+        required: true
+        default: "main"
+      target_branch:
+        description: "Target Branch"
+        required: true
+        default: "floppy-new"
+      
+      # === AI CONFIGURATION ===
+      gemini_api_key:
+        description: "Gemini 2.5 Flash API Key"
+        required: true
+      
+      merge_strategy:
+        description: "Conflict Resolution Strategy"
+        required: true
+        default: "hybrid"
+        type: choice
+        options:
+          - "hybrid"
+          - "conservative"
+          - "aggressive"
+      
+      # === SAFETY CONTROLS ===
+      conflict_threshold:
+        description: "Max Conflicts Before Abort"
+        required: true
+        default: "50"
+        type: number
+      
+      enable_validation:
+        description: "Run Pre/Post Validation"
+        required: true
+        default: true
+        type: boolean
+
+# ========================================================================
+# PERMISSIONS & ENVIRONMENT
+# ========================================================================
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  # Core Configuration
+  GEMINI_MODEL: "gemini-2.5-flash-exp"
+  GEMINI_RPM_LIMIT: 15
+  GEMINI_TPM_LIMIT: 1000000
+  
+  # Git Configuration
+  GIT_DEPTH: 100
+  GIT_STRATEGY: "ort"
+  
+  # System Paths
+  WORKSPACE: "${{ github.workspace }}"
+  TEMP_DIR: "/tmp/horizon-${{ github.run_id }}"
+
+# ========================================================================
+# JOBS
+# ========================================================================
+jobs:
+  # ------------------------------------------------------------------------
+  # PHASE 1: PREFLIGHT VALIDATION
+  # ------------------------------------------------------------------------
+  preflight:
+    name: "🔍 Preflight Validation"
+    runs-on: ubuntu-latest-4core
+    outputs:
+      passed: ${{ steps.validate.outputs.passed }}
+      message: ${{ steps.validate.outputs.message }}
+      conflict_estimate: ${{ steps.analyze.outputs.conflict_count }}
+      viable: ${{ steps.analyze.outputs.viable }}
+    
+    steps:
+      - name: "🛡️ Initialize Environment"
+        run: |
+          mkdir -p "${{ env.TEMP_DIR }}"
+          chmod 700 "${{ env.TEMP_DIR }}"
+          
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            git curl jq python3 python3-pip \
+            build-essential pkg-config
+          
+          pip3 install google-generativeai
+      
+      - name: "✅ Validate Inputs"
+        id: validate
+        run: |
+          echo "=== INPUT VALIDATION ==="
+          
+          if [[ -z "${{ inputs.gemini_api_key }}" ]]; then
+            echo "❌ Gemini API Key is required"
+            echo "passed=false" >> $GITHUB_OUTPUT
+            echo "message=Missing Gemini API Key" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # Test Gemini API
+          RESPONSE=$(curl -s -X POST \
+            "https://generativelanguage.googleapis.com/v1beta/models/${{ env.GEMINI_MODEL }}:generateContent?key=${{ inputs.gemini_api_key }}" \
+            -H "Content-Type: application/json" \
+            -d '{"contents":[{"parts":[{"text":"test"}]}]}' \
+            --max-time 10 || echo "ERROR")
+          
+          if echo "$RESPONSE" | grep -q "API_KEY_INVALID"; then
+            echo "❌ Invalid Gemini API Key"
+            echo "passed=false" >> $GITHUB_OUTPUT
+            echo "message=Invalid Gemini API Key" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          echo "✅ All inputs validated"
+          echo "passed=true" >> $GITHUB_OUTPUT
+          echo "message=Validation successful" >> $GITHUB_OUTPUT
+      
+      - name: "📊 Analyze Merge Complexity"
+        id: analyze
+        if: ${{ inputs.enable_validation == true }}
+        run: |
+          echo "=== MERGE ANALYSIS ==="
+          
+          # Clone target branch
+          git clone \
+            --depth ${{ env.GIT_DEPTH }} \
+            --branch "${{ inputs.target_branch }}" \
+            "https://github.com/${{ github.repository }}.git" \
+            "${{ env.TEMP_DIR }}/target"
+          
+          cd "${{ env.TEMP_DIR }}/target"
+          
+          # Add upstream
+          git remote add upstream "${{ inputs.upstream_repo }}"
+          git fetch upstream "${{ inputs.upstream_branch }}" --depth=20
+          
+          # Dry run merge
+          git checkout -b "analysis-${{ github.run_id }}" || true
+          
+          set +e
+          git merge --no-commit --no-ff \
+            "upstream/${{ inputs.upstream_branch }}" \
+            --strategy=${{ env.GIT_STRATEGY }} \
+            --dry-run 2>&1 | tee merge_output.txt
+          set -e
+          
+          # Count conflict indicators
+          CONFLICT_COUNT=$(grep -c "CONFLICT\|conflict" merge_output.txt || echo "0")
+          
+          # Determine viability
+          if [[ $CONFLICT_COUNT -gt ${{ inputs.conflict_threshold }} ]] && [[ "${{ inputs.conflict_threshold }}" != "0" ]]; then
+            VIABLE="false"
+          else
+            VIABLE="true"
+          fi
+          
+          echo "conflict_count=$CONFLICT_COUNT" >> $GITHUB_OUTPUT
+          echo "viable=$VIABLE" >> $GITHUB_OUTPUT
+          
+          echo "Estimated conflicts: $CONFLICT_COUNT"
+          echo "Viable: $VIABLE"
+
+  # ------------------------------------------------------------------------
+  # PHASE 2: MAIN MERGE EXECUTION
+  # ------------------------------------------------------------------------
+  merge_execution:
+    name: "⚡ Execute Merge"
+    runs-on: ubuntu-latest-8core
+    needs: preflight
+    if: ${{ needs.preflight.outputs.passed == 'true' && needs.preflight.outputs.viable == 'true' }}
+    
+    outputs:
+      merge_branch: ${{ steps.init.outputs.merge_branch }}
+      conflict_count: ${{ steps.merge.outputs.conflict_count }}
+      success: ${{ steps.finalize.outputs.success }}
+      commit_message: ${{ steps.finalize.outputs.commit_message }}
+    
+    steps:
+      # === SETUP ===
+      - name: "🚀 System Setup"
+        run: |
+          # Clean space
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
+          sudo apt-get clean
+          
+          # Install tools
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            git-lfs python3.11 python3.11-venv \
+            build-essential rsync tree pv
+          
+          # Python environment
+          python3.11 -m venv /opt/horizon
+          source /opt/horizon/bin/activate
+          pip install --upgrade pip
+          pip install \
+            google-generativeai \
+            aiohttp \
+            aiolimiter \
+            backoff \
+            tqdm \
+            colorama
+      
+      - name: "📥 Checkout Target"
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch }}
+          fetch-depth: ${{ env.GIT_DEPTH }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: "⚙️ Configure Git"
+        run: |
+          git config --global user.name "Horizon Bot"
+          git config --global user.email "horizon@github.com"
+          git config --global core.preloadIndex true
+          git config --global core.fscache true
+          
+          # Binary handling
+          cat > .gitattributes << 'EOF'
+          *.ko binary
+          *.dtb binary
+          *.img binary
+          *.o binary
+          *.a binary
+          *.so binary
+          *.c text
+          *.h text
+          *.dts text
+          *.dtsi text
+          Makefile text
+          Kconfig text
+          EOF
+      
+      - name: "🔀 Initialize Merge"
+        id: init
+        run: |
+          # Create merge branch
+          MERGE_BRANCH="horizon/merge-${{ github.run_id }}-$(date +%s)"
+          git checkout -b "$MERGE_BRANCH"
+          echo "merge_branch=$MERGE_BRANCH" >> $GITHUB_OUTPUT
+          
+          # Add upstream
+          git remote add upstream "${{ inputs.upstream_repo }}" || true
+          git fetch upstream "${{ inputs.upstream_branch }}" --depth=${{ env.GIT_DEPTH }}
+      
+      - name: "🤝 Execute Merge"
+        id: merge
+        run: |
+          set +e
+          git merge \
+            "upstream/${{ inputs.upstream_branch }}" \
+            --no-commit --no-ff \
+            --strategy=${{ env.GIT_STRATEGY }} \
+            --strategy-option="find-renames=50%" \
+            --strategy-option="diff-algorithm=histogram" \
+            2>&1 | tee merge.log
+          MERGE_EXIT=$?
+          set -e
+          
+          # Count conflicts
+          CONFLICT_FILES=$(git diff --name-only --diff-filter=U | wc -l)
+          echo "$CONFLICT_FILES" > "${{ env.TEMP_DIR }}/conflict_count.txt"
+          echo "conflict_count=$CONFLICT_FILES" >> $GITHUB_OUTPUT
+          
+          if [[ $CONFLICT_FILES -gt 0 ]]; then
+            git diff --name-only --diff-filter=U > "${{ env.TEMP_DIR }}/conflict_files.txt"
+            echo "Conflicts detected: $CONFLICT_FILES"
+          else
+            echo "✅ Clean merge"
+          fi
+      
+      # === AI RESOLUTION ===
+      - name: "🧠 Deploy AI Engine"
+        if: ${{ steps.merge.outputs.conflict_count > 0 }}
+        run: |
+          source /opt/horizon/bin/activate
+          
+          cat > /opt/horizon_engine.py << 'EOF'
+          import os, sys, re, time, json, asyncio, aiohttp
+          import google.generativeai as genai
+          from typing import List, Dict, Optional
+          from dataclasses import dataclass
+          from pathlib import Path
+          import aiolimiter
+          import backoff
+          from tqdm import tqdm
+          
+          # Configuration
+          CONFIG = {
+              "GEMINI_API_KEY": os.environ["GEMINI_API_KEY"],
+              "MODEL": os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-exp"),
+              "RPM": int(os.environ.get("GEMINI_RPM_LIMIT", 15)),
+              "TPM": int(os.environ.get("GEMINI_TPM_LIMIT", 1000000)),
+              "STRATEGY": os.environ.get("MERGE_STRATEGY", "hybrid"),
+              "TEMPERATURE": 0.1
+          }
+          
+          genai.configure(api_key=CONFIG["GEMINI_API_KEY"])
+          model = genai.GenerativeModel(CONFIG["MODEL"])
+          
+          @dataclass
+          class Conflict:
+              file: str
+              local: str
+              remote: str
+              context_before: str = ""
+              context_after: str = ""
+              
+              @property
+              def tokens(self):
+                  return len(self.local + self.remote) // 4
+          
+          class TokenBucket:
+              def __init__(self, rpm=15, tpm=1000000):
+                  self.rpm = rpm
+                  self.tpm = tpm
+                  self.requests = []
+                  self.tokens_used = 0
+                  self.window_start = time.time()
+                  
+              async def acquire(self, estimated_tokens=1000):
+                  now = time.time()
+                  
+                  # Clean old requests
+                  self.requests = [r for r in self.requests if now - r < 60]
+                  self.tokens_used = max(0, self.tokens_used - (int((now - self.window_start) / 60) * self.tpm))
+                  
+                  if now - self.window_start > 60:
+                      self.window_start = now
+                      self.requests = []
+                      self.tokens_used = 0
+                  
+                  # Check RPM
+                  if len(self.requests) >= self.rpm:
+                      wait = 60 - (now - self.requests[0])
+                      if wait > 0:
+                          await asyncio.sleep(wait)
+                          return await self.acquire(estimated_tokens)
+                  
+                  # Check TPM
+                  if self.tokens_used + estimated_tokens > self.tpm:
+                      wait = 60 * ((self.tokens_used + estimated_tokens - self.tpm) / self.tpm)
+                      if wait > 0:
+                          await asyncio.sleep(wait)
+                          return await self.acquire(estimated_tokens)
+                  
+                  self.requests.append(now)
+                  self.tokens_used += estimated_tokens
+                  return True
+          
+          class AIClient:
+              def __init__(self):
+                  self.limiter = TokenBucket(rpm=CONFIG["RPM"], tpm=CONFIG["TPM"])
+                  
+              @backoff.on_exception(backoff.expo, Exception, max_tries=3)
+              async def resolve(self, conflict: Conflict) -> Optional[str]:
+                  await self.limiter.acquire(conflict.tokens)
+                  
+                  prompt = f"""
+                  You are a Linux kernel developer. Resolve this merge conflict:
+                  
+                  File: {conflict.file}
+                  
+                  Strategy: {CONFIG["STRATEGY"]}
+                  - hybrid: Keep local drivers, use upstream for core
+                  - conservative: Prefer local changes
+                  - aggressive: Prefer upstream changes
+                  
+                  Context before:
+                  {conflict.context_before[-500:]}
+                  
+                  <<<<<<< LOCAL
+                  {conflict.local}
+                  =======
+                  {conflict.remote}
+                  >>>>>>> REMOTE
+                  
+                  Context after:
+                  {conflict.context_after[:500]}
+                  
+                  Provide ONLY the resolved code.
+                  """
+                  
+                  try:
+                      response = model.generate_content(
+                          prompt,
+                          generation_config={
+                              "temperature": CONFIG["TEMPERATURE"],
+                              "max_output_tokens": 8192
+                          }
+                      )
+                      return response.text.strip()
+                  except Exception as e:
+                      print(f"AI Error: {e}")
+                      return None
+          
+          def parse_conflicts(filepath: str) -> List[Conflict]:
+              with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                  content = f.read()
+              
+              conflicts = []
+              lines = content.splitlines(keepends=True)
+              i = 0
+              
+              while i < len(lines):
+                  if lines[i].startswith('<<<<<<<'):
+                      start = i
+                      local = []
+                      remote = []
+                      
+                      i += 1
+                      while i < len(lines) and not lines[i].startswith('======='):
+                          local.append(lines[i])
+                          i += 1
+                      
+                      if i >= len(lines):
+                          break
+                      
+                      i += 1  # Skip =======
+                      
+                      while i < len(lines) and not lines[i].startswith('>>>>>>>'):
+                          remote.append(lines[i])
+                          i += 1
+                      
+                      if i >= len(lines):
+                          break
+                      
+                      end = i
+                      
+                      conflict = Conflict(
+                          file=filepath,
+                          local=''.join(local).rstrip(),
+                          remote=''.join(remote).rstrip(),
+                          context_before=''.join(lines[max(0, start-5):start]),
+                          context_after=''.join(lines[end+1:min(len(lines), end+6)])
+                      )
+                      conflicts.append(conflict)
+                  
+                  i += 1
+              
+              return conflicts
+          
+          async def process_file(filepath: str, client: AIClient) -> bool:
+              conflicts = parse_conflicts(filepath)
+              if not conflicts:
+                  return True
+              
+              with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                  original = f.read()
+              
+              result = original
+              offset = 0
+              
+              for conflict in conflicts:
+                  resolution = await client.resolve(conflict)
+                  if not resolution:
+                      resolution = conflict.local  # Fallback
+                  
+                  # Replace conflict marker with resolution
+                  pattern = f"<<<<<<<[^=]*=======[^>]*>>>>>>>"
+                  match = re.search(pattern, result[offset:], re.DOTALL)
+                  if match:
+                      start, end = match.span()
+                      result = result[:offset+start] + resolution + result[offset+end:]
+                      offset = offset + start + len(resolution)
+              
+              with open(filepath, 'w', encoding='utf-8') as f:
+                  f.write(result)
+              
+              return True
+          
+          async def main():
+              conflict_file = os.environ.get("CONFLICT_FILES", "")
+              if not os.path.exists(conflict_file):
+                  print("No conflict files found")
+                  return
+              
+              with open(conflict_file, 'r') as f:
+                  files = [line.strip() for line in f if line.strip()]
+              
+              client = AIClient()
+              
+              success = 0
+              failed = 0
+              
+              for file in tqdm(files, desc="Resolving conflicts"):
+                  if os.path.exists(file):
+                      if await process_file(file, client):
+                          success += 1
+                          # Stage resolved file
+                          os.system(f"git add '{file}' 2>/dev/null || true")
+                      else:
+                          failed += 1
+                  else:
+                      print(f"File not found: {file}")
+              
+              print(f"Resolved: {success}, Failed: {failed}")
+              
+              # Save report
+              report = {
+                  "total": len(files),
+                  "resolved": success,
+                  "failed": failed,
+                  "timestamp": time.time()
+              }
+              
+              with open("resolution_report.json", 'w') as f:
+                  json.dump(report, f, indent=2)
+          
+          if __name__ == "__main__":
+              asyncio.run(main())
+          EOF
+          
+          echo "AI Engine deployed"
+      
+      - name: "🤖 Execute AI Resolution"
+        if: ${{ steps.merge.outputs.conflict_count > 0 }}
+        env:
+          GEMINI_API_KEY: ${{ inputs.gemini_api_key }}
+          GEMINI_MODEL: ${{ env.GEMINI_MODEL }}
+          GEMINI_RPM_LIMIT: ${{ env.GEMINI_RPM_LIMIT }}
+          GEMINI_TPM_LIMIT: ${{ env.GEMINI_TPM_LIMIT }}
+          MERGE_STRATEGY: ${{ inputs.merge_strategy }}
+          CONFLICT_FILES: "${{ env.TEMP_DIR }}/conflict_files.txt"
+        run: |
+          echo "=== AI RESOLUTION ==="
+          source /opt/horizon/bin/activate
+          python3 /opt/horizon_engine.py
+          
+          # Load and display results
+          if [[ -f "resolution_report.json" ]]; then
+            cat resolution_report.json
+          fi
+      
+      # === FINALIZATION ===
+      - name: "✅ Final Validation"
+        id: validate_final
+        run: |
+          echo "=== FINAL VALIDATION ==="
+          
+          # Check for leftover markers
+          LEFT_OVER=$(grep -r -l "<<<<<<<" . \
+            --include="*.c" --include="*.h" \
+            --include="Makefile" --include="*.mk" \
+            --include="Kconfig" 2>/dev/null | wc -l || echo "0")
+          
+          if [[ $LEFT_OVER -gt 0 ]]; then
+            echo "⚠️ Cleaning $LEFT_OVER leftover markers"
+            find . -type f \( -name "*.c" -o -name "*.h" -o -name "Makefile" -o -name "*.mk" \) \
+              -exec sed -i '/<<<<<<</,/>>>>>>>/d' {} \; 2>/dev/null || true
+          fi
+          
+          # Check for unmerged files
+          UNMERGED=$(git diff --name-only --diff-filter=U 2>/dev/null | wc -l || echo "0")
+          if [[ $UNMERGED -gt 0 ]]; then
+            echo "❌ $UNMERGED files still unmerged"
+            echo "validation_passed=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          echo "✅ Validation passed"
+          echo "validation_passed=true" >> $GITHUB_OUTPUT
+      
+      - name: "💾 Create Commit"
+        id: finalize
+        if: ${{ steps.validate_final.outputs.validation_passed == 'true' }}
+        run: |
+          # Stage everything
+          git add .
+          
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            echo "success=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Create commit
+          COMMIT_MSG="HORIZON: AI-Powered Kernel Merge (${{ inputs.merge_strategy }})
+
+          Automated merge from upstream: ${{ inputs.upstream_branch }}
+          Target: ${{ inputs.target_branch }}
+          Conflicts resolved: ${{ steps.merge.outputs.conflict_count }}
+          AI Model: ${{ env.GEMINI_MODEL }}
+          Strategy: ${{ inputs.merge_strategy }}
+
+          Workflow: ${{ github.workflow }} #${{ github.run_number }}
+          Run ID: ${{ github.run_id }}
+          Timestamp: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+          
+          git commit -m "$COMMIT_MSG"
+          
+          echo "✅ Commit created"
+          echo "success=true" >> $GITHUB_OUTPUT
+          echo "commit_message<<EOF" >> $GITHUB_OUTPUT
+          echo "$COMMIT_MSG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+  # ------------------------------------------------------------------------
+  # PHASE 3: PUSH & CLEANUP
+  # ------------------------------------------------------------------------
+  finalize:
+    name: "🚀 Finalize Merge"
+    runs-on: ubuntu-latest-4core
+    needs: [preflight, merge_execution]
+    if: ${{ needs.merge_execution.outputs.success == 'true' }}
+    
+    steps:
+      - name: "📥 Checkout Merge Branch"
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.merge_execution.outputs.merge_branch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: "🔄 Push to Target"
+        run: |
+          MERGE_BRANCH="${{ needs.merge_execution.outputs.merge_branch }}"
+          TARGET="${{ inputs.target_branch }}"
+          
+          # Push with retry logic
+          for i in {1..5}; do
+            if git push origin "$MERGE_BRANCH:$TARGET" --force-with-lease; then
+              echo "✅ Successfully pushed to $TARGET"
+              git push origin --delete "$MERGE_BRANCH" 2>/dev/null || true
+              exit 0
+            fi
+            echo "Push attempt $i failed, retrying in 10s..."
+            sleep 10
+            git fetch origin "$TARGET"
+            git rebase "origin/$TARGET" || git rebase --abort
+          done
+          
+          echo "❌ All push attempts failed"
+          exit 1
+      
+      - name: "📝 Create Success Report"
+        if: always()
+        run: |
+          echo "=== MERGE SUCCESS REPORT ==="
+          echo "Workflow: ${{ github.workflow }} #${{ github.run_number }}"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Merge Branch: ${{ needs.merge_execution.outputs.merge_branch }}"
+          echo "Target: ${{ inputs.target_branch }}"
+          echo "Conflicts: ${{ needs.merge_execution.outputs.conflict_count }}"
+          echo "AI Model: ${{ env.GEMINI_MODEL }}"
+          echo "Strategy: ${{ inputs.merge_strategy }}"
+          echo "Timestamp: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+
+  # ------------------------------------------------------------------------
+  # PHASE 4: FAILURE RECOVERY
+  # ------------------------------------------------------------------------
+  failure_recovery:
+    name: "🆘 Failure Recovery"
+    runs-on: ubuntu-latest
+    needs: [preflight, merge_execution]
+    if: failure()
+    
+    steps:
+      - name: "📊 Generate Failure Report"
+        run: |
+          echo "=== FAILURE ANALYSIS ==="
+          
+          FAILURE_TIME=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          
+          cat > failure_report.md << 'EOF'
+          # 🚨 Horizon Merge Failed
+          
+          ## Summary
+          - **Timestamp:** $FAILURE_TIME
+          - **Workflow:** ${{ github.workflow }} #${{ github.run_number }}
+          - **Run ID:** ${{ github.run_id }}
+          
+          ## Configuration
+          - **Upstream:** ${{ inputs.upstream_repo }} @ ${{ inputs.upstream_branch }}
+          - **Target:** ${{ inputs.target_branch }}
+          - **Strategy:** ${{ inputs.merge_strategy }}
+          - **AI Model:** ${{ env.GEMINI_MODEL }}
+          
+          ## Job Results
+          EOF
+          
+          # Determine failed job
+          if [[ "${{ needs.preflight.result }}" == "failure" ]]; then
+            echo "### Preflight Failed" >> failure_report.md
+            echo "- **Validation:** ${{ needs.preflight.outputs.passed }}" >> failure_report.md
+            echo "- **Message:** ${{ needs.preflight.outputs.message }}" >> failure_report.md
+            echo "- **Conflicts Estimated:** ${{ needs.preflight.outputs.conflict_estimate }}" >> failure_report.md
+          else
+            echo "### Merge Execution Failed" >> failure_report.md
+            echo "- **Merge Branch:** ${{ needs.merge_execution.outputs.merge_branch || 'N/A' }}" >> failure_report.md
+            echo "- **Conflicts:** ${{ needs.merge_execution.outputs.conflict_count || '0' }}" >> failure_report.md
+          fi
+          
+          cat >> failure_report.md << 'EOF'
+          
+          ## Next Steps
+          1. Check workflow logs for details
+          2. Review the merge branch if available
+          3. Adjust conflict threshold or strategy
+          4. Verify API keys and permissions
+          EOF
+          
+          cat failure_report.md
+      
+      - name: "🚨 Create Emergency Issue"
+        if: ${{ inputs.enable_validation == true }}
+        uses: actions/github-script@v6
+        env:
+          MERGE_BRANCH: ${{ needs.merge_execution.outputs.merge_branch || 'N/A' }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+        with:
+          script: |
+            const failedJob = '${{ needs.preflight.result }}' === 'failure' ? 'preflight' : 'merge_execution';
+            
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚨 Horizon Merge Failed: ${context.workflow} #${context.runNumber}`,
+              body: `## Merge Failure Detected\n\n` +
+                    `**Workflow:** ${context.workflow} #${context.runNumber}\n` +
+                    `**Run ID:** ${context.runId}\n` +
+                    `**Target Branch:** ${process.env.TARGET_BRANCH}\n` +
+                    `**Failed Job:** ${failedJob}\n\n` +
+                    `[View Workflow Run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})\n\n` +
+                    `## Recovery Information\n` +
+                    `- Merge Branch: \`${process.env.MERGE_BRANCH}\`\n` +
+                    `- Check logs for detailed errors\n` +
+                    `- Manual intervention required`,
+              labels: ['merge-failure', 'needs-triage'],
+              assignees: [context.actor]
+            });
+      
+      - name: "📁 Upload Debug Data"
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: horizon-debug-${{ github.run_id }}
+          path: |
+            ${{ env.TEMP_DIR }}
+            *.log
+            *.json
+            *.md
+          retention-days: 7
