@@ -572,6 +572,7 @@ jobs:
           import os
           import sys
           import subprocess
+          import traceback
           import hashlib
           import statistics
           from datetime import datetime, timedelta
@@ -1010,8 +1011,7 @@ jobs:
                       prompt = self._build_kernel_prompt(conflict)
                       
                       # Generate content
-                      response = await asyncio.to_thread(
-                          self.model.generate_content,
+                      response = self.model.generate_content(
                           prompt,
                           generation_config={
                               "temperature": self.config.gemini_temperature,
@@ -1581,7 +1581,7 @@ jobs:
                   sys.exit(1)
           
           if __name__ == "__main__":
-              import traceback
+            
               asyncio.run(main())
           EOF
           
@@ -1904,7 +1904,7 @@ jobs:
             needs-review
           assignees: ${{ github.actor }}
           reviewers: ${{ github.actor }}
-          commit-message: ${{ needs.execute_merge.outputs.commit_message }}
+          commit_message: ${{ steps.finalize.outputs.commit_message }}
       
       - name: "🧹 Cleanup Temporary Resources"
         if: always()
@@ -1936,7 +1936,7 @@ jobs:
     name: "🆘 Failure Recovery & Reporting"
     runs-on: ubuntu-latest
     needs: [preflight_validation, execute_merge]
-    if: ${{ failure() && needs.preflight_validation.result == 'failure' || needs.execute_merge.result == 'failure' }}
+    if: ${{ failure() }}
     
     steps:
       - name: "📊 Generate Failure Analysis"
