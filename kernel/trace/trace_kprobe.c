@@ -1366,15 +1366,15 @@ static int kprobe_register(struct trace_event_call *event,
 static int kprobe_dispatcher(struct kprobe *kp, struct pt_regs *regs)
 {
 	struct trace_kprobe *tk = container_of(kp, struct trace_kprobe, rp.kp);
-	int ret = 0;
+	unsigned int flags = trace_probe_load_flag(&tk->tp);
 
 	raw_cpu_inc(*tk->nhit);
 
-	if (tk->tp.flags & TP_FLAG_TRACE)
+	if (flags & TP_FLAG_TRACE)
 		kprobe_trace_func(tk, regs);
 #ifdef CONFIG_PERF_EVENTS
-	if (tk->tp.flags & TP_FLAG_PROFILE)
-		ret = kprobe_perf_func(tk, regs);
+	if (flags & TP_FLAG_PROFILE)
+		kprobe_perf_func(tk, regs);
 #endif
 	return ret;
 }
@@ -1384,13 +1384,15 @@ static int
 kretprobe_dispatcher(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	struct trace_kprobe *tk = container_of(ri->rp, struct trace_kprobe, rp);
+	unsigned int flags;
 
 	raw_cpu_inc(*tk->nhit);
 
-	if (tk->tp.flags & TP_FLAG_TRACE)
+	flags = trace_probe_load_flag(&tk->tp);
+	if (flags & TP_FLAG_TRACE)
 		kretprobe_trace_func(tk, ri, regs);
 #ifdef CONFIG_PERF_EVENTS
-	if (tk->tp.flags & TP_FLAG_PROFILE)
+	if (flags & TP_FLAG_PROFILE)
 		kretprobe_perf_func(tk, ri, regs);
 #endif
 	return 0;	/* We don't tweek kernel, so just return 0 */

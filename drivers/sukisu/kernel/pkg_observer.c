@@ -6,6 +6,7 @@
 #include <linux/slab.h>
 #include <linux/rculist.h>
 #include <linux/version.h>
+#include <linux/string.h>
 #include "klog.h" // IWYU pragma: keep
 #include "ksu.h"
 #include "throne_tracker.h"
@@ -26,6 +27,8 @@ static struct fsnotify_group *g;
 #include "pkg_observer_defs.h" // KSU_DECL_FSNOTIFY_OPS
 static KSU_DECL_FSNOTIFY_OPS(ksu_handle_inode_event)
 {
+	size_t len;
+
 	if (!file_name)
 		return 0;
 	if (mask & FS_ISDIR)

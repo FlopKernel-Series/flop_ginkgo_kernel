@@ -36,6 +36,7 @@
 		opp-1353 { opp-hz = /bits/ 64 < 10322 >; }; /*  9.1353 MHz */
 		opp-1555 { opp-hz = /bits/ 64 < 11863 >; }; /* 10.1555 MHz */
 		opp-1804 { opp-hz = /bits/ 64 < 13763 >; }; /* 11.1804 MHz */
+        opp-2133 { opp-hz = /bits/ 64 < 16273 >; }; /* 12.2133 MHz */
 	};
 
 	gpubw: qcom,gpubw {
@@ -63,7 +64,7 @@
 		qcom,chipid = <0x06010000>;
 
 		qcom,initial-pwrlevel = <6>;
-		qcom,idle-timeout = <64>;
+		qcom,idle-timeout = <80>;
 
 		qcom,ubwc-mode = <1>;
 		qcom,min-access-length = <64>;
@@ -125,9 +126,9 @@
 		/* Enable context aware freq. scaling */
 		qcom,enable-ca-jump;
 		/* Context aware jump busy penalty in us */
-		qcom,ca-busy-penalty = <12000>;
+		qcom,ca-busy-penalty = <9000>;
 		/* Context aware jump target power level */
-		qcom,ca-target-pwrlevel = <5>;
+		qcom,ca-target-pwrlevel = <4>;
 
 		qcom,gpu-gaming-bin = <0x6018 0x80 7>;
 
@@ -178,25 +179,25 @@
 				reg = <0>;
 				qcom,gpu-freq = <950000000>;
 				qcom,bus-freq = <12>;
-				qcom,bus-min = <10>;
-				qcom,bus-max = <11>;
+				qcom,bus-min = <12>;
+				qcom,bus-max = <12>;
 			};
 
 			/* TURBO */
 			qcom,gpu-pwrlevel@1 {
 				reg = <1>;
 				qcom,gpu-freq = <900000000>;
-				qcom,bus-freq = <12>;
-				qcom,bus-min = <9>;
-				qcom,bus-max = <11>;
+				qcom,bus-freq = <11>;
+				qcom,bus-min = <10>;
+				qcom,bus-max = <12>;
 			};
 
 			/* NOM_L1 */
 			qcom,gpu-pwrlevel@2 {
 				reg = <2>;
 				qcom,gpu-freq = <820000000>;
-				qcom,bus-freq = <10>;
-				qcom,bus-min = <9>;
+				qcom,bus-freq = <11>;
+				qcom,bus-min = <10>;
 				qcom,bus-max = <11>;
 			};
 
@@ -204,8 +205,8 @@
 			qcom,gpu-pwrlevel@3 {
 				reg = <3>;
 				qcom,gpu-freq = <745000000>;
-				qcom,bus-freq = <9>;
-				qcom,bus-min = <8>;
+				qcom,bus-freq = <10>;
+				qcom,bus-min = <9>;
 				qcom,bus-max = <10>;
 			};
 
@@ -223,7 +224,7 @@
 				reg = <5>;
 				qcom,gpu-freq = <465000000>;
 				qcom,bus-freq = <7>;
-				qcom,bus-min = <5>;
+				qcom,bus-min = <6>;
 				qcom,bus-max = <8>;
 			};
 
@@ -233,7 +234,7 @@
 				qcom,gpu-freq = <320000000>;
 				qcom,bus-freq = <4>;
 				qcom,bus-min = <3>;
-				qcom,bus-max = <5>;
+				qcom,bus-max = <6>;
 			};
 
 			/* XO */

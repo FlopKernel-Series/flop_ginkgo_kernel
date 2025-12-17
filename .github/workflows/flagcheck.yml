@@ -1,0 +1,177 @@
+name: "FloppyKernel flag check"
+
+on:
+  workflow_dispatch:
+
+env:
+  # UPDATE THIS LINK TO THE EXACT CLANG YOU USE
+  LLVM_URL: "https://raw.githubusercontent.com/PurrrsLitterbox/LLVM-weekly/main/latestlink.txt"
+  
+  # Architecture to test against (Must be valid)
+  TARGET_TRIPLE: "aarch64-linux-gnu"
+  
+  # Path setup
+  TOOLCHAIN_DIR: "toolchains/clang"
+
+jobs:
+  audit_flags:
+    name: Audit Makefile Flags
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Prepare Toolchain
+        run: |
+          sudo apt-get update && sudo apt-get install -y zstd
+          mkdir -p ${{ env.TOOLCHAIN_DIR }}
+          
+          # Get the direct link
+          LINK=$(curl -sL ${{ env.LLVM_URL }})
+          echo "Downloading from: $LINK"
+          
+          # Download and extract
+          wget -qO clang.tar.zst "$LINK"
+          tar -I zstd -xf clang.tar.zst -C ${{ env.TOOLCHAIN_DIR }}
+          
+          # Fix path if tarball has nested folder
+          if [ -d "${{ env.TOOLCHAIN_DIR }}/clang" ]; then
+            mv ${{ env.TOOLCHAIN_DIR }}/clang/* ${{ env.TOOLCHAIN_DIR }}/
+          fi
+          
+          # Verify
+          ${{ env.TOOLCHAIN_DIR }}/bin/clang --version
+
+      - name: Run Intelligent Flag Auditor
+        shell: python3 {0}
+        run: |
+          import re
+          import subprocess
+          import sys
+          import os
+
+          # --- CONFIGURATION ---
+          makefile_path = "Makefile"
+          clang_bin = "${{ env.TOOLCHAIN_DIR }}/bin/clang"
+          target = "${{ env.TARGET_TRIPLE }}"
+          
+          print(f"::group::🔍 Scanning {makefile_path}...")
+
+          if not os.path.exists(makefile_path):
+              print("::error::Makefile not found!")
+              sys.exit(1)
+
+          with open(makefile_path, 'r', errors='ignore') as f:
+              content = f.read()
+
+          # 1. CLEANING THE INPUT
+          # Remove Makefile variables like $(call cc-option, ...) to get raw flags
+          # We just replace common makefile syntax with spaces to make parsing easier
+          clean_content = content.replace("$(call cc-option,", " ").replace(")", " ")
+          clean_content = clean_content.replace(":=", " ").replace("+=", " ").replace("=", " ")
+          
+          # 2. EXTRACT POTENTIAL FLAGS
+          # Find strings starting with -
+          tokens = re.findall(r'(?<!\w)-[a-zA-Z0-9_\-+=.]+', clean_content)
+          
+          # 3. INTELLIGENT PARSING
+          flags_to_test = []
+          skip_next = False
+          
+          for i in range(len(tokens)):
+              if skip_next:
+                  skip_next = False
+                  continue
+              
+              token = tokens[i]
+              
+              # LOGIC: Handle -mllvm flag pair
+              if token == "-mllvm" and i + 1 < len(tokens):
+                  # Glue them together: "-mllvm -enable-foo"
+                  combined = f"{token} {tokens[i+1]}"
+                  flags_to_test.append(combined)
+                  skip_next = True
+              # LOGIC: Skip Linker/Make junk
+              elif token.startswith("--") and "param" not in token and "target" not in token:
+                  # Assume double dash flags (like --gc-sections) are Linker flags unless it's --param
+                  continue
+              elif token in ["-rR", "-include", "-I", "-L", "-D", "-o", "-c", "-s", "-w"]:
+                  continue
+              else:
+                  flags_to_test.append(token)
+
+          # Remove duplicates
+          unique_flags = sorted(list(set(flags_to_test)))
+          print(f"Found {len(unique_flags)} unique flags to test.")
+          print("::endgroup::")
+
+          # 4. TESTING
+          print("::group::🧪 Testing Flags...")
+          
+          supported = []
+          unsupported = []
+          
+          for flag in unique_flags:
+              # Skip includes/defines
+              if flag.startswith("-I") or flag.startswith("-D"): continue
+
+              # Construct Command
+              # We use specific flags to force Clang to error out if a flag is bad
+              cmd = [
+                  clang_bin,
+                  f"--target={target}",
+                  "-Werror=unknown-warning-option",
+                  "-Werror=unused-command-line-argument",
+                  "-Werror=ignored-optimization-argument",
+                  "-Werror=option-ignored",
+                  "-x", "c", "/dev/null",  # Compile empty C file
+                  "-c", "-o", "/dev/null"
+              ]
+              
+              # Add the flag(s)
+              cmd.extend(flag.split())
+
+              # Run
+              result = subprocess.run(cmd, capture_output=True, text=True)
+              
+              if result.returncode == 0:
+                  print(f"✅ SUPPORTED: {flag}")
+                  supported.append(flag)
+              else:
+                  # Extract error message for the report
+                  err = result.stderr.split('\n')[0]
+                  # Filter out "unused" warnings if they slipped through
+                  if "unused" in err or "unknown" in err or "ignored" in err:
+                      print(f"❌ UNSUPPORTED: {flag}")
+                      unsupported.append(f"{flag}  [Reason: {err}]")
+                  else:
+                      # Sometimes it passes but warns. If return code 0, we count it, 
+                      # but if it failed for other reasons, note it.
+                      print(f"❌ FAILED: {flag}")
+                      unsupported.append(f"{flag}  [Reason: {err}]")
+
+          print("::endgroup::")
+
+          # 5. GENERATE REPORT
+          report_file = "FLAG_REPORT.txt"
+          with open(report_file, "w") as f:
+              f.write("=== CLANG FLAG COMPATIBILITY REPORT ===\n")
+              f.write(f"Toolchain: {clang_bin}\n")
+              f.write(f"Target: {target}\n")
+              f.write("=======================================\n\n")
+              
+              f.write(f"❌ UNSUPPORTED FLAGS ({len(unsupported)}):\n")
+              f.write("(These will be ignored or cause errors in your build)\n")
+              for item in unsupported:
+                  f.write(f"  - {item}\n")
+                  
+              f.write(f"\n✅ SUPPORTED FLAGS ({len(supported)}):\n")
+              for item in supported:
+                  f.write(f"  + {item}\n")
+
+      - name: Upload Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: Flag-Audit-Report
+          path: FLAG_REPORT.txt
