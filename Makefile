@@ -921,9 +921,9 @@ ifdef CONFIG_THINLTO
 lto-clang-flags	:= -flto=thin -fsplit-lto-unit $(call cc-option,-funified-lto)
 
 # LLVM tunings
-LDFLAGS += -mllvm -inline-threshold=2550
+LDFLAGS += -mllvm -inline-threshold=450
 
-LDFLAGS += -mllvm -import-instr-limit=1050
+LDFLAGS += -mllvm -import-instr-limit=40
 
 
 # Identical Code Folding (Safe replacement for Machine Outliner)
@@ -1062,7 +1062,7 @@ KBUILD_CFLAGS	+= $(call cc-option,-fmacro-prefix-map=$(srctree)/=)
 KBUILD_CFLAGS += -funroll-loops
 
 # Aligns to 32-byte cache lines. Zero-wait fetching.
-KBUILD_CFLAGS += -falign-functions=32
+KBUILD_CFLAGS += -falign-functions=8
 
 # Remove Unwind Tables
 KBUILD_CFLAGS   += -fno-unwind-tables
@@ -1098,7 +1098,7 @@ KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-loop-flatten)
 # 'Constraint Elimination' removes useless checks.
 KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-constraint-elimination)
 
-KBUILD_CFLAGS	+= $(call cc-option,-mllvm -unroll-threshold=600)
+KBUILD_CFLAGS	+= $(call cc-option,-mllvm -unroll-threshold=150)
 KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-partial-inlining)
 KBUILD_CFLAGS	+= $(call cc-option,-mllvm -force-vector-width=4)
 KBUILD_CFLAGS	+= $(call cc-option,-mllvm -enable-interleaved-mem-accesses)
