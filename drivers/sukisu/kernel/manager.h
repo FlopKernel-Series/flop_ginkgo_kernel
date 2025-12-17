@@ -21,8 +21,10 @@ static inline bool ksu_is_manager_appid_valid(void)
 
 static inline bool is_manager(void)
 {
-	return unlikely(ksu_is_any_manager(current_uid().val) || 
-			(ksu_manager_appid != KSU_INVALID_APPID && ksu_manager_appid == current_uid().val % PER_USER_RANGE));
+	return unlikely(
+		ksu_is_any_manager(current_uid().val) ||
+		(ksu_manager_appid != KSU_INVALID_APPID &&
+		 ksu_manager_appid == current_uid().val % PER_USER_RANGE));
 }
 
 static inline uid_t ksu_get_manager_appid(void)

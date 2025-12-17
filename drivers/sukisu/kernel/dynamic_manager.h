@@ -14,10 +14,11 @@ struct dynamic_sign_key {
 	const char *hash;
 };
 
-#define DYNAMIC_SIGN_DEFAULT_CONFIG { \
-	.size = 0x300, \
-	.hash = "0000000000000000000000000000000000000000000000000000000000000000" \
-}
+#define DYNAMIC_SIGN_DEFAULT_CONFIG                                                        \
+	{                                                                                  \
+		.size = 0x300,                                                             \
+		.hash = "0000000000000000000000000000000000000000000000000000000000000000" \
+	}
 
 struct dynamic_manager_config {
 	unsigned int size;

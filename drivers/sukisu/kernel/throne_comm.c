@@ -24,7 +24,6 @@ static struct proc_dir_entry *proc_entry = NULL;
 static struct workqueue_struct *scanner_wq = NULL;
 static struct work_struct scan_work;
 
-
 // Signal userspace to rescan
 static bool need_rescan = false;
 
@@ -56,18 +55,22 @@ static void do_save_throne_state(struct callback_head *_cb)
 	loff_t off = 0;
 	const struct cred *saved = override_creds(ksu_cred);
 
-	fp = filp_open(UID_SCANNER_STATE_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	fp = filp_open(UID_SCANNER_STATE_FILE, O_WRONLY | O_CREAT | O_TRUNC,
+		       0644);
 	if (IS_ERR(fp)) {
-		pr_err("save_throne_state create file failed: %ld\n", PTR_ERR(fp));
+		pr_err("save_throne_state create file failed: %ld\n",
+		       PTR_ERR(fp));
 		goto revert;
 	}
 
-	if (kernel_write(fp, &state_char, sizeof(state_char), &off) != sizeof(state_char)) {
+	if (kernel_write(fp, &state_char, sizeof(state_char), &off) !=
+	    sizeof(state_char)) {
 		pr_err("save_throne_state write failed\n");
 		goto close_file;
 	}
 
-	pr_info("throne state saved: %s\n", ksu_uid_scanner_enabled ? "enabled" : "disabled");
+	pr_info("throne state saved: %s\n",
+		ksu_uid_scanner_enabled ? "enabled" : "disabled");
 
 close_file:
 	filp_close(fp, 0);
@@ -99,7 +102,8 @@ static void do_load_throne_state(struct callback_head *_cb)
 	}
 
 	ksu_uid_scanner_enabled = (state_char == '1');
-	pr_info("throne state loaded: %s\n", ksu_uid_scanner_enabled ? "enabled" : "disabled");
+	pr_info("throne state loaded: %s\n",
+		ksu_uid_scanner_enabled ? "enabled" : "disabled");
 
 close_file:
 	filp_close(fp, 0);
@@ -178,28 +182,28 @@ static int uid_scanner_open(struct inode *inode, struct file *file)
 	return single_open(file, uid_scanner_show, NULL);
 }
 
-static ssize_t uid_scanner_write(struct file *file, const char __user *buffer, 
-								 size_t count, loff_t *pos)
+static ssize_t uid_scanner_write(struct file *file, const char __user *buffer,
+				 size_t count, loff_t *pos)
 {
 	char cmd[16];
-	
+
 	if (count >= sizeof(cmd))
 		return -EINVAL;
-		
+
 	if (copy_from_user(cmd, buffer, count))
 		return -EFAULT;
-		
+
 	cmd[count] = '\0';
-	
+
 	// Remove newline if present
-	if (count > 0 && cmd[count-1] == '\n')
-		cmd[count-1] = '\0';
-	
+	if (count > 0 && cmd[count - 1] == '\n')
+		cmd[count - 1] = '\0';
+
 	if (strcmp(cmd, "UPDATED") == 0) {
 		ksu_handle_userspace_update();
 		pr_info("received userspace update notification\n");
 	}
-	
+
 	return count;
 }
 
@@ -230,17 +234,18 @@ int ksu_throne_comm_init(void)
 		pr_err("failed to create scanner workqueue\n");
 		return -ENOMEM;
 	}
-	
+
 	INIT_WORK(&scan_work, rescan_work_fn);
-	
+
 	// Create proc entry
-	proc_entry = proc_create(PROC_UID_SCANNER, 0600, NULL, &uid_scanner_proc_ops);
+	proc_entry = proc_create(PROC_UID_SCANNER, 0600, NULL,
+				 &uid_scanner_proc_ops);
 	if (!proc_entry) {
 		pr_err("failed to create proc entry\n");
 		destroy_workqueue(scanner_wq);
 		return -ENOMEM;
 	}
-	
+
 	pr_info("throne communication initialized\n");
 	return 0;
 }
@@ -251,12 +256,12 @@ void ksu_throne_comm_exit(void)
 		proc_remove(proc_entry);
 		proc_entry = NULL;
 	}
-	
+
 	if (scanner_wq) {
 		destroy_workqueue(scanner_wq);
 		scanner_wq = NULL;
 	}
-	
+
 	pr_info("throne communication cleaned up\n");
 }
 

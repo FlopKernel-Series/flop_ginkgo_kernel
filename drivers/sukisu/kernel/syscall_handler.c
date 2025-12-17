@@ -79,7 +79,7 @@ static void ksu_mark_running_process_locked()
 		// before boot completed, we shall mark init for marking zygote
 		bool is_init = t->pid == 1;
 		if (ksu_root_process || is_zygote_process || is_shell ||
-			is_init || ksu_is_allow_uid(uid)) {
+		    is_init || ksu_is_allow_uid(uid)) {
 			ksu_set_task_tracepoint_flag(t);
 			pr_info("hook_manager: mark process: pid:%d, uid: %d, comm:%s\n",
 				t->pid, uid, t->comm);
@@ -119,7 +119,7 @@ int ksu_get_task_mark(pid_t pid)
 		rcu_read_unlock();
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
 		marked = test_task_syscall_work(task, SYSCALL_TRACEPOINT) ? 1 :
-										0;
+									    0;
 #else
 		marked = test_tsk_thread_flag(task, TIF_SYSCALL_TRACEPOINT) ?
 				 1 :
@@ -215,7 +215,7 @@ static int syscall_regfunc_handler(struct kretprobe_instance *ri,
 }
 
 static int syscall_unregfunc_handler(struct kretprobe_instance *ri,
-					 struct pt_regs *regs)
+				     struct pt_regs *regs)
 {
 	unsigned long flags;
 	spin_lock_irqsave(&tracepoint_reg_lock, flags);
@@ -256,7 +256,7 @@ int ksu_handle_init_mark_tracker(const char __user **filename_user)
 	if (unlikely(!filename_user))
 		return 0;
 	if (!ksu_retry_filename_access(filename_user, path, sizeof(path),
-					   false))
+				       false))
 		return 0;
 
 	if (unlikely(strcmp(path, KSUD_PATH) == 0)) {
@@ -305,7 +305,7 @@ static void ksu_sys_enter_handler(void *data, struct pt_regs *regs, long id)
 						regs);
 				int *mode = (int *)&PT_REGS_PARM3(regs);
 				ksu_handle_faccessat(dfd, filename_user, mode,
-							 NULL);
+						     NULL);
 				return;
 			}
 
@@ -315,7 +315,7 @@ static void ksu_sys_enter_handler(void *data, struct pt_regs *regs, long id)
 					(const char __user **)&PT_REGS_PARM1(
 						regs);
 				if (current->pid != 1 &&
-					is_init(get_current_cred())) {
+				    is_init(get_current_cred())) {
 					ksu_handle_init_mark_tracker(
 						filename_user);
 				} else {
@@ -360,7 +360,7 @@ void ksu_syscall_hook_manager_init(void)
 #endif
 	if (ret) {
 		pr_err("hook_manager: failed to register sys_enter tracepoint: %d\n",
-			   ret);
+		       ret);
 	} else {
 		pr_info("hook_manager: sys_enter tracepoint registered\n");
 	}

@@ -171,11 +171,7 @@ static inline bool task_is_booster(struct task_struct *tsk)
 			!strcmp(comm, "perf2-hal-servi") ||
 			!strcmp(comm, "init.qcom.post_") ||
 			!strcmp(comm, "power@2.0-servic") ||
-			!strcmp(comm, "iop@") ||
-			!strcmp(comm, "PERFD-SERVER") ||
-			!strcmp(comm, "mtkPowerMsgHdl") ||
-			!strcmp(comm, "mtkPowerService") ||
-			!strncmp(comm, "system_perf_ini", 9);
+			!strcmp(comm, "PERFD-SERVER");
 }
 
 #endif /* _LINUX_BINFMTS_H */

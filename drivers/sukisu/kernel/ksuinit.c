@@ -28,7 +28,7 @@
 #include "supercalls.h"
 #include "ksu.h"
 
-struct cred* ksu_cred;
+struct cred *ksu_cred;
 
 extern void __init ksu_lsm_hook_init(void);
 
@@ -58,13 +58,20 @@ int __init kernelsu_init(void)
 #endif
 
 #ifdef CONFIG_KSU_DEBUG
-	pr_alert("*************************************************************");
-	pr_alert("**	 NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE	**");
-	pr_alert("**														 **");
-	pr_alert("**		 You are running KernelSU in DEBUG mode		  **");
-	pr_alert("**														 **");
-	pr_alert("**	 NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE	**");
-	pr_alert("*************************************************************");
+	pr_alert(
+		"*************************************************************");
+	pr_alert(
+		"**	 NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE	**");
+	pr_alert(
+		"**														 **");
+	pr_alert(
+		"**		 You are running KernelSU in DEBUG mode		  **");
+	pr_alert(
+		"**														 **");
+	pr_alert(
+		"**	 NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE	**");
+	pr_alert(
+		"*************************************************************");
 #endif
 
 	ksu_cred = prepare_creds();

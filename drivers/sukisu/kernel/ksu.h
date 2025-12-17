@@ -14,7 +14,7 @@
 // SukiSU Ultra kernel su version full strings
 extern bool ksu_uid_scanner_enabled;
 
-#ifndef KSU_VERSION_FULL 
+#ifndef KSU_VERSION_FULL
 #define KSU_VERSION_FULL "v3.x-00000000@unknown"
 #endif
 #define KSU_FULL_VERSION_STRING 255
@@ -55,6 +55,6 @@ static inline int endswith(const char *s, const char *t)
 	return strcmp(s + slen - tlen, t);
 }
 
-extern struct cred* ksu_cred;
+extern struct cred *ksu_cred;
 
 #endif

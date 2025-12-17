@@ -104,6 +104,11 @@ struct ksu_add_try_umount_cmd {
 	__u8 mode; // denotes what to do with it 0:wipe_list 1:add_to_list 2:delete_entry
 };
 
+struct ksu_list_try_umount_cmd {
+	__aligned_u64 arg; // User buffer
+	__u32 buf_size; // Buffer size provided by userspace
+};
+
 #define KSU_UMOUNT_WIPE 0 // ignore everything and wipe list
 #define KSU_UMOUNT_ADD 1 // add entry (path + flags)
 #define KSU_UMOUNT_DEL 2 // delete entry, strcmp
@@ -122,7 +127,8 @@ struct ksu_enable_kpm_cmd {
 };
 
 struct ksu_dynamic_manager_cmd {
-	struct dynamic_manager_user_config config; // Input/Output: dynamic manager config
+	struct dynamic_manager_user_config
+		config; // Input/Output: dynamic manager config
 };
 
 struct ksu_get_managers_cmd {
@@ -132,7 +138,8 @@ struct ksu_get_managers_cmd {
 struct ksu_enable_uid_scanner_cmd {
 	__u32 operation; // Input: operation type (UID_SCANNER_OP_GET_STATUS, UID_SCANNER_OP_TOGGLE, UID_SCANNER_OP_CLEAR_ENV)
 	__u32 enabled; // Input: enable or disable (for UID_SCANNER_OP_TOGGLE)
-	void __user *status_ptr; // Input: pointer to store status (for UID_SCANNER_OP_GET_STATUS)
+	void __user *
+		status_ptr; // Input: pointer to store status (for UID_SCANNER_OP_GET_STATUS)
 };
 
 #ifdef CONFIG_KSU_MANUAL_SU
@@ -173,6 +180,7 @@ struct ksu_manual_su_cmd {
 #ifdef CONFIG_KSU_MANUAL_SU
 #define KSU_IOCTL_MANUAL_SU _IOC(_IOC_READ | _IOC_WRITE, 'K', 106, 0)
 #endif
+#define KSU_IOCTL_LIST_TRY_UMOUNT _IOC(_IOC_READ | _IOC_WRITE, 'K', 301, 0)
 
 // IOCTL handler types
 typedef int (*ksu_ioctl_handler_t)(void __user *arg);
@@ -186,11 +194,11 @@ struct ksu_ioctl_cmd_map {
 	ksu_perm_check_t perm_check; // Permission check function
 };
 
-#define KSU_IOCTL(CMD, NAME, HANDLER, PERM)									\
-	{ .cmd = KSU_IOCTL_##CMD,											  \
-	  .name = NAME,														\
-	  .handler = HANDLER,												  \
-	  .perm_check = PERM }
+#define KSU_IOCTL(CMD, NAME, HANDLER, PERM)                                    \
+	{                                                                      \
+		.cmd = KSU_IOCTL_##CMD, .name = NAME, .handler = HANDLER,      \
+		.perm_check = PERM                                             \
+	}
 
 // Install KSU fd to current process
 int ksu_install_fd(void);

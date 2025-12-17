@@ -52,7 +52,7 @@ static struct sdesc *init_sdesc(struct crypto_shash *alg)
 }
 
 static int calc_hash(struct crypto_shash *alg, const unsigned char *data,
-			 unsigned int datalen, unsigned char *digest)
+		     unsigned int datalen, unsigned char *digest)
 {
 	struct sdesc *sdesc;
 	int ret;
@@ -69,7 +69,7 @@ static int calc_hash(struct crypto_shash *alg, const unsigned char *data,
 }
 
 static int ksu_sha256(const unsigned char *data, unsigned int datalen,
-			  unsigned char *digest)
+		      unsigned char *digest)
 {
 	struct crypto_shash *alg;
 	char *hash_alg_name = "sha256";
@@ -85,18 +85,20 @@ static int ksu_sha256(const unsigned char *data, unsigned int datalen,
 	return ret;
 }
 
-
 static struct dynamic_sign_key dynamic_sign = DYNAMIC_SIGN_DEFAULT_CONFIG;
 
-static bool check_dynamic_sign(struct file *fp, u32 size4, loff_t *pos, int *matched_index)
+static bool check_dynamic_sign(struct file *fp, u32 size4, loff_t *pos,
+			       int *matched_index)
 {
 	struct dynamic_sign_key current_dynamic_key = dynamic_sign;
-	
-	if (ksu_get_dynamic_manager_config(&current_dynamic_key.size, &current_dynamic_key.hash)) {
-		pr_debug("Using dynamic manager config: size=0x%x, hash=%.16s...\n", 
-				 current_dynamic_key.size, current_dynamic_key.hash);
+
+	if (ksu_get_dynamic_manager_config(&current_dynamic_key.size,
+					   &current_dynamic_key.hash)) {
+		pr_debug(
+			"Using dynamic manager config: size=0x%x, hash=%.16s...\n",
+			current_dynamic_key.size, current_dynamic_key.hash);
 	}
-	
+
 	if (size4 != current_dynamic_key.size) {
 		return false;
 	}
@@ -107,9 +109,9 @@ static bool check_dynamic_sign(struct file *fp, u32 size4, loff_t *pos, int *mat
 		pr_info("cert length overlimit\n");
 		return false;
 	}
-	
+
 	ksu_kernel_read_compat(fp, cert, size4, pos);
-	
+
 	unsigned char digest[SHA256_DIGEST_SIZE];
 	if (ksu_sha256(cert, size4, digest) < 0) {
 		pr_info("sha256 error\n");
@@ -119,20 +121,22 @@ static bool check_dynamic_sign(struct file *fp, u32 size4, loff_t *pos, int *mat
 	char hash_str[SHA256_DIGEST_SIZE * 2 + 1];
 	hash_str[SHA256_DIGEST_SIZE * 2] = '\0';
 	bin2hex(hash_str, digest, SHA256_DIGEST_SIZE);
-	
-	pr_info("sha256: %s, expected: %s, index: dynamic\n", hash_str, current_dynamic_key.hash);
-	
+
+	pr_info("sha256: %s, expected: %s, index: dynamic\n", hash_str,
+		current_dynamic_key.hash);
+
 	if (strcmp(current_dynamic_key.hash, hash_str) == 0) {
 		if (matched_index) {
 			*matched_index = DYNAMIC_SIGN_INDEX;
 		}
 		return true;
 	}
-	
+
 	return false;
 }
 
-static bool check_block(struct file *fp, u32 *size4, loff_t *pos, u32 *offset, int *matched_index)
+static bool check_block(struct file *fp, u32 *size4, loff_t *pos, u32 *offset,
+			int *matched_index)
 {
 	int i;
 	apk_sign_key_t sign_key;
@@ -186,9 +190,9 @@ static bool check_block(struct file *fp, u32 *size4, loff_t *pos, u32 *offset, i
 		hash_str[SHA256_DIGEST_SIZE * 2] = '\0';
 
 		bin2hex(hash_str, digest, SHA256_DIGEST_SIZE);
-		pr_info("sha256: %s, expected: %s, index: %d\n",
-			 hash_str, sign_key.sha256, i);
-		
+		pr_info("sha256: %s, expected: %s, index: %d\n", hash_str,
+			sign_key.sha256, i);
+
 		if (strcmp(sign_key.sha256, hash_str) == 0) {
 			signature_valid = true;
 			if (matched_index) {
@@ -223,8 +227,8 @@ static bool has_v1_signature_file(struct file *fp)
 	loff_t pos = 0;
 
 	while (ksu_kernel_read_compat(fp, &header,
-					  sizeof(struct zip_entry_header), &pos) ==
-		   sizeof(struct zip_entry_header)) {
+				      sizeof(struct zip_entry_header), &pos) ==
+	       sizeof(struct zip_entry_header)) {
 		if (header.signature != 0x04034b50) {
 			// ZIP magic: 'PK'
 			return false;
@@ -233,12 +237,12 @@ static bool has_v1_signature_file(struct file *fp)
 		if (header.file_name_length == sizeof(MANIFEST) - 1) {
 			char fileName[sizeof(MANIFEST)];
 			ksu_kernel_read_compat(fp, fileName,
-						   header.file_name_length, &pos);
+					       header.file_name_length, &pos);
 			fileName[header.file_name_length] = '\0';
 
 			// Check if the entry matches META-INF/MANIFEST.MF
 			if (strncmp(MANIFEST, fileName, sizeof(MANIFEST) - 1) ==
-				0) {
+			    0) {
 				return true;
 			}
 		} else {
@@ -253,7 +257,8 @@ static bool has_v1_signature_file(struct file *fp)
 	return false;
 }
 
-static __always_inline bool check_v2_signature(char *path, bool check_multi_manager, int *signature_index)
+static __always_inline bool
+check_v2_signature(char *path, bool check_multi_manager, int *signature_index)
 {
 	unsigned char buffer[0x11] = { 0 };
 	u32 size4;
@@ -322,7 +327,7 @@ static __always_inline bool check_v2_signature(char *path, bool check_multi_mana
 		uint32_t id;
 		uint32_t offset;
 		ksu_kernel_read_compat(fp, &size8, 0x8,
-					   &pos); // sequence length
+				       &pos); // sequence length
 		if (size8 == size_of_block) {
 			break;
 		}
@@ -330,7 +335,8 @@ static __always_inline bool check_v2_signature(char *path, bool check_multi_mana
 		offset = 4;
 		if (id == 0x7109871au) {
 			v2_signing_blocks++;
-			bool result = check_block(fp, &size4, &pos, &offset, &matched_index);
+			bool result = check_block(fp, &size4, &pos, &offset,
+						  &matched_index);
 			if (result) {
 				v2_signing_valid = true;
 			}
@@ -351,7 +357,7 @@ static __always_inline bool check_v2_signature(char *path, bool check_multi_mana
 	if (v2_signing_blocks != 1) {
 #ifdef CONFIG_KSU_DEBUG
 		pr_err("Unexpected v2 signature count: %d\n",
-			   v2_signing_blocks);
+		       v2_signing_blocks);
 #endif
 		v2_signing_valid = false;
 	}
@@ -378,11 +384,13 @@ clean:
 		if (signature_index) {
 			*signature_index = matched_index;
 		}
-		
+
 		if (check_multi_manager) {
 			// 0: ShirkNeko/SukiSU, DYNAMIC_SIGN_INDEX : Dynamic Sign
-			if (matched_index == 0 || matched_index == DYNAMIC_SIGN_INDEX) {
-				pr_info("Multi-manager APK detected (dynamic_manager enabled): signature_index=%d\n", matched_index);
+			if (matched_index == 0 ||
+			    matched_index == DYNAMIC_SIGN_INDEX) {
+				pr_info("Multi-manager APK detected (dynamic_manager enabled): signature_index=%d\n",
+					matched_index);
 				return true;
 			}
 			return false;

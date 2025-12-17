@@ -37,7 +37,11 @@ static int cmdline_proc_show(struct seq_file *m, void *v)
 		return 0;
 	}
 #endif
+#ifdef CONFIG_INITRAMFS_IGNORE_SKIP_FLAG
+	seq_puts(m, proc_command_line);
+#else
 	seq_puts(m, saved_command_line);
+#endif
 	seq_putc(m, '\n');
 	return 0;
 }

@@ -47,7 +47,7 @@ static const struct ksu_feature_handler kernel_umount_handler = {
 	.set_handler = kernel_umount_feature_set,
 };
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0) ||						   \
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0) ||                           \
 	defined(KSU_HAS_PATH_UMOUNT)
 extern int path_umount(struct path *path, int flags);
 static void ksu_umount_mnt(const char *__never_use_mnt, struct path *path,
@@ -74,10 +74,10 @@ static void ksu_sys_umount(const char *mnt, int flags)
 	set_fs(old_fs);
 }
 
-#define ksu_umount_mnt(mnt, __unused, flags)								   \
-	({																	 \
-		path_put(__unused);											\
-		ksu_sys_umount(mnt, flags);									\
+#define ksu_umount_mnt(mnt, __unused, flags)                                   \
+	({                                                                     \
+		path_put(__unused);                                            \
+		ksu_sys_umount(mnt, flags);                                    \
 	})
 
 #endif

@@ -60,11 +60,13 @@ static const char KERNEL_SU_RC[] =
 	"\n"
 
 	"on nonencrypted\n"
-	"	exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " services\n"
+	"	exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH
+	" services\n"
 	"\n"
 
 	"on property:vold.decrypt=trigger_restart_framework\n"
-	"	exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " services\n"
+	"	exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH
+	" services\n"
 	"\n"
 
 	"on property:sys.boot_completed=1\n"
@@ -227,8 +229,8 @@ static inline void handle_second_stage(void)
 
 // IMPORTANT NOTE: the call from execve_handler_pre WON'T provided correct value for envp and flags in GKI version
 int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr,
-				 struct user_arg_ptr *argv,
-				 struct user_arg_ptr *envp, int *flags)
+			     struct user_arg_ptr *argv,
+			     struct user_arg_ptr *envp, int *flags)
 {
 #ifdef CONFIG_KSU_MANUAL_HOOK
 	if (!ksu_execveat_hook) {
@@ -255,8 +257,8 @@ int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr,
 	}
 
 	if (unlikely(!memcmp(filename->name, system_bin_init,
-				 sizeof(system_bin_init) - 1) &&
-			 argv)) {
+			     sizeof(system_bin_init) - 1) &&
+		     argv)) {
 		// /system/bin/init executed
 		int argc = count(*argv, MAX_ARG_STRINGS);
 		pr_info("/system/bin/init argc: %d\n", argc);
@@ -278,8 +280,8 @@ int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr,
 			}
 		}
 	} else if (unlikely(!memcmp(filename->name, old_system_init,
-					sizeof(old_system_init) - 1) &&
-				argv)) {
+				    sizeof(old_system_init) - 1) &&
+			    argv)) {
 		// /init executed
 		int argc = count(*argv, MAX_ARG_STRINGS);
 		pr_info("/init argc: %d\n", argc);
@@ -313,7 +315,7 @@ int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr,
 					char env[256];
 					// Reading environment variable strings from user space
 					if (ksu_strncpy_from_user_nofault(
-							env, p, sizeof(env)) < 0)
+						    env, p, sizeof(env)) < 0)
 						continue;
 					// Parsing environment variable names and values
 					char *env_name = env;
@@ -325,9 +327,9 @@ int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr,
 					env_value++;
 					// Check if the environment variable name and value are matching
 					if (!strcmp(env_name,
-							"INIT_SECOND_STAGE") &&
-						(!strcmp(env_value, "1") ||
-						 !strcmp(env_value, "true"))) {
+						    "INIT_SECOND_STAGE") &&
+					    (!strcmp(env_value, "1") ||
+					     !strcmp(env_value, "true"))) {
 						pr_info("/init second_stage executed\n");
 						handle_second_stage();
 						init_second_stage_executed =
@@ -348,7 +350,7 @@ int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr,
 		init_task = rcu_dereference(current->real_parent);
 		if (init_task) {
 			task_work_add(init_task, &on_post_fs_data_cb,
-					  TWA_RESUME);
+				      TWA_RESUME);
 		}
 		rcu_read_unlock();
 		stop_execve_hook();
@@ -583,7 +585,7 @@ static int ksu_execve_ksud_common(const char __user *filename_user,
 
 int __maybe_unused
 ksu_handle_execve_ksud(const char __user *filename_user,
-			   const char __user *const __user *__argv)
+		       const char __user *const __user *__argv)
 {
 	struct user_arg_ptr argv = { .ptr.native = __argv };
 	return ksu_execve_ksud_common(filename_user, &argv);

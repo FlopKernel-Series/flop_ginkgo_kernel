@@ -10,10 +10,10 @@
 #include "supercalls.h"
 #include "kp_util.h"
 
-#define DECL_KP(name, sym, pre)												\
-	struct kprobe name = {												 \
-		.symbol_name = sym,											\
-		.pre_handler = pre,											\
+#define DECL_KP(name, sym, pre)                                                \
+	struct kprobe name = {                                                 \
+		.symbol_name = sym,                                            \
+		.pre_handler = pre,                                            \
 	}
 
 // ksud.c

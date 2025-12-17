@@ -921,10 +921,7 @@ ifdef CONFIG_THINLTO
 lto-clang-flags	:= -flto=thin -fsplit-lto-unit $(call cc-option,-funified-lto)
 
 # LLVM tunings
-LDFLAGS += -mllvm -inline-threshold=450
-
-LDFLAGS += -mllvm -import-instr-limit=40
-
+KBUILD_LDFLAGS += -mllvm -inline-threshold=450
 
 # Identical Code Folding (Safe replacement for Machine Outliner)
 KBUILD_LDFLAGS += -Wl,--icf=all
@@ -946,6 +943,7 @@ KBUILD_LDS_MODULE += $(srctree)/scripts/module-lto.lds
 # allow disabling only clang LTO where needed
 DISABLE_LTO_CLANG := -fno-lto
 export DISABLE_LTO_CLANG
+LDFLAGS		+= --plugin-opt=-import-instr-limit=40
 endif
 
 ifdef CONFIG_LTO
