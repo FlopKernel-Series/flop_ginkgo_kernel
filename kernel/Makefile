@@ -117,9 +117,9 @@ $(obj)/configs.o: $(obj)/config_data.h
 
 targets += config_data.gz
 
-STOCK_DEFCONFIG := arch/arm64/configs/ginkgo-stock_defconfig
+IKCONFIG_SOURCE := $(KCONFIG_CONFIG)
 
-$(obj)/config_data.gz: $(STOCK_DEFCONFIG) FORCE
+$(obj)/config_data.gz: $(IKCONFIG_SOURCE) FORCE
 	$(call if_changed,gzip)
 
       filechk_ikconfiggz = (echo "static const char kernel_config_data[] __used = MAGIC_START"; cat $< | scripts/basic/bin2c; echo "MAGIC_END;")
