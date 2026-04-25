@@ -38,67 +38,134 @@
 #include "compat/kernel_compat.h"
 #include "selinux/selinux.h"
 #include "manager/throne_tracker.h"
-#ifdef KSU_TP_HOOK
+#ifdef CONFIG_KSU_TRACEPOINT_HOOK
 #include "hook/syscall_hook.h"
 #endif
 
-static const char KERNEL_SU_RC[] = "\n"
+// clang-format off
+static const char KERNEL_SU_RC[] = 
+    "\n"
 
-                                   "on post-fs-data\n"
-                                   "	start logd\n"
-                                   // We should wait for the post-fs-data finish
-                                   "	exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " post-fs-data\n"
-                                   "\n"
+    "on post-fs-data\n"
+    "	start logd\n"
+    // We should wait for the post-fs-data finish
+    "	exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " post-fs-data\n"
+    "\n"
 
-                                   "on nonencrypted\n"
-                                   "	exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " services\n"
-                                   "\n"
+    "on nonencrypted\n"
+    "	exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " services\n"
+    "\n"
 
-                                   "on property:vold.decrypt=trigger_restart_framework\n"
-                                   "	exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " services\n"
-                                   "\n"
+    "on property:vold.decrypt=trigger_restart_framework\n"
+    "	exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " services\n"
+    "\n"
 
-                                   "on property:sys.boot_completed=1\n"
-                                   "	exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " boot-completed\n"
-                                   "\n"
+    "on property:sys.boot_completed=1\n"
+    "	exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " boot-completed\n"
+    "\n"
 
-                                   "\n";
+    "\n";
+// clang-format on
 
 static void stop_init_rc_hook(void);
 static void stop_execve_hook(void);
 
-#if defined(KSU_COMPAT_USE_STATIC_KEY) && defined(CONFIG_KSU_MANUAL_HOOK_AUTO_INITRC_HOOK) || defined(CONFIG_KSU_SUSFS)
-#define KSU_INIT_RC_USE_STATIC_KEY
-#endif
+// clang-format off
+#if defined(CONFIG_KSU_TRACEPOINT_HOOK)
+    static struct work_struct stop_input_hook_work;
 
-#if defined(KSU_COMPAT_USE_STATIC_KEY) && defined(CONFIG_KSU_MANUAL_HOOK_AUTO_INPUT_HOOK) || defined(CONFIG_KSU_SUSFS)
-#define KSU_INPUT_USE_STATIC_KEY
-#endif
+    // tp hook will ask kernel unregister hook when we no need
+    #define ksu_init_rc_hook_inactive() false
+    #define ksu_input_hook_inactive() false
 
-#if defined(KSU_TP_HOOK)
-static struct work_struct stop_input_hook_work;
+    static void stop_init_rc_hook(void)
+    {
+        ksu_syscall_table_unhook(__NR_read);
+        ksu_syscall_table_unhook(__NR_fstat);
+        pr_info("unregister init_rc syscall hook\n");
+        pr_info("stop init_rc_hook!\n");
+    }
+
+    static inline void stop_input_hook(void)
+    {
+        bool ret = schedule_work(&stop_input_hook_work);
+        pr_info("unregister input kprobe: %d!\n", ret);
+    }
 #elif defined(CONFIG_KSU_SUSFS)
-DEFINE_STATIC_KEY_TRUE(ksu_is_init_rc_hook_enabled);
-DEFINE_STATIC_KEY_TRUE(ksu_is_input_hook_enabled);
+    DEFINE_STATIC_KEY_TRUE(ksu_is_init_rc_hook_enabled);
+    DEFINE_STATIC_KEY_TRUE(ksu_is_input_hook_enabled);
 
-// use define to avoid ifdef
-#define ksu_init_rc_hook ksu_init_rc_hook_key_false
-#define ksu_input_hook ksu_is_input_hook_enabled
+    // use define to avoid ifdef
+    #define ksu_init_rc_hook_inactive() (!static_branch_likely(&ksu_is_init_rc_hook_enabled))
+    #define ksu_input_hook_inactive() (!static_branch_likely(&ksu_is_input_hook_enabled))
+
+    static void stop_init_rc_hook(void)
+    {
+        if (static_key_enabled(&ksu_is_init_rc_hook_enabled))
+            static_branch_disable(&ksu_is_init_rc_hook_enabled);
+        pr_info("stop init_rc_hook!\n");
+    }
+
+    static inline void stop_input_hook(void)
+    {
+        if (static_key_enabled(&ksu_is_input_hook_enabled))
+            static_branch_disable(&ksu_is_input_hook_enabled);
+    }
+
+#elif defined(CONFIG_KSU_MANUAL_HOOK)
+    #if defined(CONFIG_KSU_MANUAL_HOOK_AUTO_INITRC_HOOK) && defined(KSU_COMPAT_USE_STATIC_KEY)
+        DEFINE_STATIC_KEY_TRUE(ksu_init_rc_hook);
+        #define ksu_init_rc_hook_inactive() (!static_branch_likely(&ksu_init_rc_hook))
+        static void stop_init_rc_hook(void)
+        {
+            if (static_key_enabled(&ksu_init_rc_hook))
+                static_branch_disable(&ksu_init_rc_hook);
+            pr_info("stop init_rc_hook!\n");
+        }
+    #else
+        bool ksu_init_rc_hook __read_mostly = true;
+        #define ksu_init_rc_hook_inactive() (likely(!ksu_init_rc_hook))
+        static void stop_init_rc_hook(void)
+        {
+            ksu_init_rc_hook = false;
+            pr_info("stop init_rc_hook!\n");
+        }
+    #endif
+
+    #if defined(CONFIG_KSU_MANUAL_HOOK_AUTO_INPUT_HOOK) && defined(KSU_COMPAT_USE_STATIC_KEY)
+        DEFINE_STATIC_KEY_TRUE(ksu_input_hook);
+        #define ksu_input_hook_inactive() (!static_branch_likely(!ksu_input_hook))
+        static void vol_detector_exit();
+
+        static inline void stop_input_hook(void)
+        {
+            if (static_key_enabled(&ksu_input_hook))
+                static_branch_disable(&ksu_input_hook);
+            vol_detector_exit();
+        }
+    #else
+        bool ksu_input_hook __read_mostly = true;
+        #define ksu_input_hook_inactive() (likely(!ksu_input_hook))
+
+        #ifdef CONFIG_KSU_MANUAL_HOOK_AUTO_INPUT_HOOK
+            static void vol_detector_exit();
+            static inline void stop_input_hook(void)
+            {
+                ksu_input_hook = false;
+                vol_detector_exit();
+            }
+        #else
+            static inline void stop_input_hook(void)
+            {
+                ksu_input_hook = false;
+            }
+        #endif
+    #endif
+
 #else
-
-#if defined(CONFIG_KSU_MANUAL_HOOK_AUTO_INITRC_HOOK) && defined(KSU_COMPAT_USE_STATIC_KEY)
-DEFINE_STATIC_KEY_TRUE(ksu_init_rc_hook);
-#else
-bool ksu_init_rc_hook __read_mostly = true;
+    #error "Unsupported hook type"
 #endif
-
-#if defined(CONFIG_KSU_MANUAL_HOOK_AUTO_INPUT_HOOK) && defined(KSU_COMPAT_USE_STATIC_KEY)
-DEFINE_STATIC_KEY_TRUE(ksu_input_hook);
-#else
-bool ksu_input_hook __read_mostly = true;
-#endif
-
-#endif
+// clang-format on
 
 static const char __user *get_user_arg_ptr(struct user_arg_ptr argv, int nr)
 {
@@ -384,16 +451,9 @@ typedef enum {
 
 static __always_inline void ksu_common_newfstat_ret(unsigned long fd_long, void **statbuf_ptr, const int type)
 {
-#ifdef KSU_INIT_RC_USE_STATIC_KEY
-    if (static_branch_unlikely(&ksu_init_rc_hook))
-        goto logic;
-#else
-    if (unlikely(ksu_init_rc_hook))
-        goto logic;
-#endif
+    if (ksu_init_rc_hook_inactive())
+        return;
 
-    return;
-logic:
     if (!is_init(current_cred()))
         return;
 
@@ -488,19 +548,8 @@ void ksu_handle_initrc(struct file *file)
         return;
     }
 
-#if defined(KSU_INIT_RC_USE_STATIC_KEY) && !defined(KSU_TP_HOOK)
-    if (static_branch_unlikely(&ksu_init_rc_hook))
-        goto logic;
-#elif !defined(KSU_TP_HOOK)
-    if (unlikely(ksu_init_rc_hook))
-        goto logic;
-#else
-    goto logic;
-#endif
-
-    return;
-
-logic:
+    if (ksu_init_rc_hook_inactive())
+        return;
 
     if (!is_init(current_cred()))
         return;
@@ -574,8 +623,14 @@ static bool is_volumedown_enough(unsigned int count)
     return count >= 3;
 }
 
-static inline void do_ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value)
+int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value)
 {
+#ifdef CONFIG_KSU_MANUAL_HOOK_AUTO_INPUT_HOOK
+    return 0; // dummy manual hook
+#else
+    if (ksu_input_hook_inactive())
+        return 0;
+
     if (*type == EV_KEY && *code == KEY_VOLUMEDOWN) {
         int val = *value;
         pr_info("KEY_VOLUMEDOWN val: %d\n", val);
@@ -587,29 +642,6 @@ static inline void do_ksu_handle_input_handle_event(unsigned int *type, unsigned
             }
         }
     }
-}
-
-int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value)
-{
-#ifdef CONFIG_KSU_MANUAL_HOOK_AUTO_INPUT_HOOK
-    return 0; // dummy manual hook
-#else
-
-#if defined(KSU_INPUT_USE_STATIC_KEY) && !defined(KSU_TP_HOOK)
-    if (static_branch_unlikely(&ksu_input_hook))
-        goto logic;
-
-#elif !defined(KSU_TP_HOOK)
-    if (unlikely(!ksu_input_hook))
-        goto logic;
-#else
-    goto logic;
-#endif
-
-    return 0;
-logic:
-
-    do_ksu_handle_input_handle_event(type, code, value);
 
     return 0;
 #endif
@@ -752,7 +784,7 @@ bool ksu_is_safe_mode()
     return false;
 }
 
-#ifdef KSU_TP_HOOK
+#ifdef CONFIG_KSU_TRACEPOINT_HOOK
 void ksu_execve_hook_ksud(const struct pt_regs *regs)
 {
     const char __user **filename_user = (const char **)&PT_REGS_PARM1(regs);
@@ -847,24 +879,6 @@ static void do_stop_input_hook(struct work_struct *work)
 }
 #endif
 
-static void stop_init_rc_hook(void)
-{
-#ifdef KSU_TP_HOOK
-    ksu_syscall_table_unhook(__NR_read);
-    ksu_syscall_table_unhook(__NR_fstat);
-    pr_info("unregister init_rc syscall hook\n");
-#else
-#ifdef KSU_INIT_RC_USE_STATIC_KEY
-    if (static_key_enabled(&ksu_init_rc_hook))
-        static_branch_disable(&ksu_init_rc_hook);
-#else
-    ksu_init_rc_hook = false;
-#endif
-
-    pr_info("stop init_rc_hook!\n");
-#endif
-}
-
 void ksu_stop_input_hook_runtime(void)
 {
     static bool input_hook_stopped = false;
@@ -872,28 +886,13 @@ void ksu_stop_input_hook_runtime(void)
         return;
     }
     input_hook_stopped = true;
-#ifdef KSU_TP_HOOK
-    bool ret = schedule_work(&stop_input_hook_work);
-    pr_info("unregister input kprobe: %d!\n", ret);
-#else
-#ifdef KSU_INPUT_USE_STATIC_KEY
-    if (static_key_enabled(&ksu_input_hook))
-        static_branch_disable(&ksu_input_hook);
-#else
-    ksu_input_hook = false;
-#endif
-    pr_info("stop input_hook\n");
-#endif
-
-#ifdef CONFIG_KSU_MANUAL_HOOK_AUTO_INPUT_HOOK
-    vol_detector_exit();
-#endif
+    stop_input_hook();
 }
 
 // ksud: module support
 void __init ksu_ksud_init(void)
 {
-#ifdef KSU_TP_HOOK
+#ifdef CONFIG_KSU_TRACEPOINT_HOOK
     int ret;
 
     ksu_syscall_table_hook(__NR_read, ksu_sys_read, &orig_sys_read);
@@ -911,7 +910,7 @@ void __init ksu_ksud_init(void)
 
 void __exit ksu_ksud_exit(void)
 {
-#ifdef KSU_TP_HOOK
+#ifdef CONFIG_KSU_TRACEPOINT_HOOK
     // TODO:
     // this should be done before unregister vfs_read_kp
     // stop_init_rc_hook();
