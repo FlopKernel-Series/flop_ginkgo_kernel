@@ -104,7 +104,7 @@ void mconsole_version(struct mc_request *req)
 {
 	char version[256];
 
-	sprintf(version, "%s %s %s %s %s", utsname()->sysname,
+	snprintf(version, sizeof(version), "%s %s %s %s %s", utsname()->sysname,
 		utsname()->nodename, utsname()->release, utsname()->version,
 		utsname()->machine);
 	mconsole_reply(req, version, 0, 0);
@@ -118,6 +118,8 @@ void mconsole_log(struct mc_request *req)
 	ptr += strlen("log ");
 
 	len = req->len - (ptr - req->request.data);
+	if (len < 0)
+		return;
 	printk(KERN_WARNING "%.*s", len, ptr);
 	mconsole_reply(req, "", 0, 0);
 }
@@ -378,7 +380,7 @@ static int mem_get_config(char *name, char *str, int size, char **error_out)
 	char buf[sizeof("18446744073709551615")];
 	int len = 0;
 
-	sprintf(buf, "%ld", uml_physmem);
+	snprintf(buf, sizeof(buf), "%ld", uml_physmem);
 	CONFIG_CHUNK(str, size, len, buf, 1);
 
 	return len;
@@ -513,7 +515,7 @@ void mconsole_remove(struct mc_request *req)
 		goto out;
 	}
 	else if ((n < start) || (n > end)) {
-		sprintf(error, "Invalid device number - must be between "
+		snprintf(error, sizeof(error), "Invalid device number - must be between "
 			"%d and %d", start, end);
 		err_msg = error;
 		goto out;
@@ -559,8 +561,9 @@ static void console_write(struct console *console, const char *string,
 		return;
 
 	while (len > 0) {
-		n = min((size_t) len, ARRAY_SIZE(console_buf));
-		strncpy(console_buf, string, n);
+		n = min((size_t) len, ARRAY_SIZE(console_buf) - 1);
+		memcpy(console_buf, string, n);
+		console_buf[n] = '\0';
 		string += n;
 		len -= n;
 
