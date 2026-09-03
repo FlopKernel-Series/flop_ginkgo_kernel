@@ -21,7 +21,6 @@ static int sepol_expected_argc(u32 cmd);
 
 // flex array
 struct ksu_hide_buf {
-	struct rcu_head rcu; // for kfree_rcu()
 	size_t len;
 	char data[];
 };
@@ -87,9 +86,10 @@ static noinline void ksu_add_shit_to_list(u32 cmd, const char *args[])
 
 		struct ksu_hide_buf *old_ptr = curr_type_list;
 		rcu_assign_pointer(ksu_hide_type_list, new_ptr);
-		// kfree_rcu(): no GP wait, we may hold write_lock(&policy_rwlock)
-		if (old_ptr)
-			kfree_rcu(old_ptr, rcu);
+		if (old_ptr) {
+			synchronize_rcu();
+			kfree(old_ptr);
+		}
 
 		pr_info("selinux_hide: tracking type: %s\n", w_ptr);
 
@@ -151,9 +151,10 @@ static noinline void ksu_add_shit_to_list(u32 cmd, const char *args[])
 
 		struct ksu_hide_buf *old_ptr = curr_rule_list;
 		rcu_assign_pointer(ksu_hide_rule_list, new_ptr);
-		// kfree_rcu(): no GP wait, we may hold write_lock(&policy_rwlock)
-		if (old_ptr)
-			kfree_rcu(old_ptr, rcu);
+		if (old_ptr) {
+			synchronize_rcu();
+			kfree(old_ptr);
+		}
 
 		pr_info("selinux_hide: tracking rule: %s %s\n", w_ptr_src, w_ptr_tgt);
 
