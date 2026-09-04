@@ -11,6 +11,8 @@
  *
  */
 
+// selinux_hide's list, hazard pointers via C11 atomics
+
 #ifndef __KSU_H_SELINUX_HIDE
 #define __KSU_H_SELINUX_HIDE
 
@@ -23,17 +25,65 @@ static int sepol_expected_argc(u32 cmd);
 struct ksu_hide_buf {
 	size_t len;
 	char data[];
-};
+} __attribute__((aligned(sizeof(size_t))));
 
 // types
 // :type1:\0:type2:\0:type3:\0
-static struct ksu_hide_buf __rcu *ksu_hide_type_list __read_mostly = NULL;
+static struct ksu_hide_buf *ksu_hide_type_list __read_mostly = NULL;
 
 // rules
 // :src1:\0:tgt1:\0:src2:\0:tgt2:\0:src3:\0:tgt3:\0
-static struct ksu_hide_buf __rcu *ksu_hide_rule_list __read_mostly = NULL;
+static struct ksu_hide_buf *ksu_hide_rule_list __read_mostly = NULL;
 
 static DEFINE_MUTEX(selinux_hide_list_mutex);
+
+#define KSU_MAX_HP_SLOTS 32
+static struct ksu_hide_buf *ksu_selinux_hide_hazptr[KSU_MAX_HP_SLOTS] = { 0 };
+
+// NOTE: can ret null on uninitialized state
+static inline struct ksu_hide_buf *ksu_selinux_hide_get_buf(struct ksu_hide_buf **g_buf)
+{
+	// reader has to pin its own slot
+	preempt_disable();
+
+	int slot = raw_smp_processor_id() % KSU_MAX_HP_SLOTS;
+	struct ksu_hide_buf *buf;
+
+check_buf:
+	buf = __atomic_load_n(g_buf, __ATOMIC_ACQUIRE);
+	__atomic_store_n(&ksu_selinux_hide_hazptr[slot], buf, __ATOMIC_RELEASE);
+
+	if (buf != __atomic_load_n(g_buf, __ATOMIC_ACQUIRE))
+		goto check_buf;
+
+	return buf;
+}
+
+static inline void ksu_selinux_hide_put_buf(struct ksu_hide_buf **unused)
+{
+	int slot = raw_smp_processor_id() % KSU_MAX_HP_SLOTS;
+	__atomic_store_n(&ksu_selinux_hide_hazptr[slot], NULL, __ATOMIC_RELEASE);
+	
+	preempt_enable();
+}
+
+static inline void ksu_wait_and_free(struct ksu_hide_buf *old_ptr)
+{
+	if (!old_ptr)
+		return;
+	int i;
+
+	// acquire it on ALL slots!
+	// only free it once ALL slots say that their slot no longer contains old ptr
+	// #pragma GCC unroll 0
+	// #pragma nounroll
+	for (i = 0; i < KSU_MAX_HP_SLOTS; i++) {
+		while (__atomic_load_n(&ksu_selinux_hide_hazptr[i], __ATOMIC_ACQUIRE) == old_ptr)
+			cpu_relax();
+	}
+
+	kfree(old_ptr);
+}
 
 static noinline void ksu_add_shit_to_list(u32 cmd, const char *args[])
 {
@@ -49,14 +99,13 @@ static noinline void ksu_add_shit_to_list(u32 cmd, const char *args[])
 		const char *name = args[0];
 		size_t needed_len = strlen(name) + 3; // :type:\0
 
-		struct ksu_hide_buf *curr_type_list = rcu_dereference(ksu_hide_type_list);
-		if (!curr_type_list)
+		if (!ksu_hide_type_list)
 			goto skip_type_dup_check;
 
 		// anti duplicate
 		size_t offset = 0;
-		while (curr_type_list->len > offset) {
-			const char *current_type = curr_type_list->data + offset;
+		while (ksu_hide_type_list->len > offset) {
+			const char *current_type = ksu_hide_type_list->data + offset;
 
 			char tmp_buf[64];
 			snprintf(tmp_buf, sizeof(tmp_buf), ":%s:", name);
@@ -69,7 +118,7 @@ static noinline void ksu_add_shit_to_list(u32 cmd, const char *args[])
 
 	skip_type_dup_check:
 		;
-		size_t old_len = (curr_type_list) ? curr_type_list->len : 0;
+		size_t old_len = (ksu_hide_type_list) ? ksu_hide_type_list->len : 0;
 		size_t new_total_len = old_len + needed_len;
 
 		struct ksu_hide_buf *new_ptr = kmalloc(sizeof(*new_ptr) + new_total_len, GFP_KERNEL);
@@ -78,18 +127,14 @@ static noinline void ksu_add_shit_to_list(u32 cmd, const char *args[])
 
 		new_ptr->len = new_total_len;
 
-		if (curr_type_list && old_len > 0)
-			memcpy(new_ptr->data, curr_type_list->data, old_len);
+		if (ksu_hide_type_list && old_len > 0)
+			memcpy(new_ptr->data, ksu_hide_type_list->data, old_len);
 
 		char *w_ptr = new_ptr->data + old_len;
 		sprintf(w_ptr, ":%s:", name);
 
-		struct ksu_hide_buf *old_ptr = curr_type_list;
-		rcu_assign_pointer(ksu_hide_type_list, new_ptr);
-		if (old_ptr) {
-			synchronize_rcu();
-			kfree(old_ptr);
-		}
+		struct ksu_hide_buf *old_ptr = __atomic_exchange_n(&ksu_hide_type_list, new_ptr, __ATOMIC_ACQ_REL);
+		ksu_wait_and_free(old_ptr);
 
 		pr_info("selinux_hide: tracking type: %s\n", w_ptr);
 
@@ -106,14 +151,13 @@ static noinline void ksu_add_shit_to_list(u32 cmd, const char *args[])
 		size_t tgt_needed = strlen(tgt) + 3; // :tgt:\0
 		size_t needed_len = src_needed + tgt_needed;
 
-		struct ksu_hide_buf *curr_rule_list = rcu_dereference(ksu_hide_rule_list);
-		if (!curr_rule_list)
+		if (!ksu_hide_rule_list)
 			goto skip_rule_dup_check;
 
 		// anti duplicate
 		size_t offset = 0;
-		while (curr_rule_list->len > offset) {
-			const char *src_chk = curr_rule_list->data + offset;
+		while (ksu_hide_rule_list->len > offset) {
+			const char *src_chk = ksu_hide_rule_list->data + offset;
 			size_t src_sz = strlen(src_chk) + 1; // for \0
 
 			const char *tgt_chk = src_chk + src_sz;
@@ -131,7 +175,7 @@ static noinline void ksu_add_shit_to_list(u32 cmd, const char *args[])
 
 	skip_rule_dup_check:
 		;
-		size_t old_len = (curr_rule_list) ? curr_rule_list->len : 0;
+		size_t old_len = (ksu_hide_rule_list) ? ksu_hide_rule_list->len : 0;
 		size_t new_total_len = old_len + needed_len;
 
 		struct ksu_hide_buf *new_ptr = kmalloc(sizeof(*new_ptr) + new_total_len, GFP_KERNEL);
@@ -140,8 +184,8 @@ static noinline void ksu_add_shit_to_list(u32 cmd, const char *args[])
 
 		new_ptr->len = new_total_len;
 
-		if (curr_rule_list && old_len > 0)
-			memcpy(new_ptr->data, curr_rule_list->data, old_len);
+		if (ksu_hide_rule_list && old_len > 0)
+			memcpy(new_ptr->data, ksu_hide_rule_list->data, old_len);
 
 		char *w_ptr_src = new_ptr->data + old_len;
 		sprintf(w_ptr_src, ":%s:", src);
@@ -149,12 +193,8 @@ static noinline void ksu_add_shit_to_list(u32 cmd, const char *args[])
 		char *w_ptr_tgt = w_ptr_src + strlen(w_ptr_src) + 1;
 		sprintf(w_ptr_tgt, ":%s:", tgt);
 
-		struct ksu_hide_buf *old_ptr = curr_rule_list;
-		rcu_assign_pointer(ksu_hide_rule_list, new_ptr);
-		if (old_ptr) {
-			synchronize_rcu();
-			kfree(old_ptr);
-		}
+		struct ksu_hide_buf *old_ptr = __atomic_exchange_n(&ksu_hide_rule_list, new_ptr, __ATOMIC_ACQ_REL);
+		ksu_wait_and_free(old_ptr);
 
 		pr_info("selinux_hide: tracking rule: %s %s\n", w_ptr_src, w_ptr_tgt);
 
@@ -168,56 +208,48 @@ static bool ksu_should_destroy_context(char *str)
 	if (!str)
 		return false;
 
-	bool ret = false;
-	size_t offset;
+{ // scope++
+	struct ksu_hide_buf *type_buf __cleanup(ksu_selinux_hide_put_buf) = ksu_selinux_hide_get_buf(&ksu_hide_type_list);
+	if (unlikely(!type_buf))
+		goto check_rule;
 
-	rcu_read_lock();
+	size_t offset = 0;
+	while (type_buf->len > offset) {
+		const char *current_entry = type_buf->data + offset;
 
-	struct ksu_hide_buf *type_list = rcu_dereference(ksu_hide_type_list);
-	if (!type_list)
-		goto rule_check;
-	
-	offset = 0;
-	while (type_list->len > offset) {
-		const char *current_entry = type_list->data + offset;
-
-		if (strstr(str, current_entry)) {
-			ret = true;
-			goto out;
-		}
+		if (strstr(str, current_entry))
+			return true;
 
 		offset = offset + strlen(current_entry) + 1;
 	}
+} // scope--
 
-rule_check:
+check_rule:
 	; // double strstr
 	char *str2 = strchr(str, ' ');
 	if (!str2)
-		goto out;
+		return false;
 
-	struct ksu_hide_buf *rule_list = rcu_dereference(ksu_hide_rule_list);
-	if (!rule_list)
-		goto out;
-
-	offset = 0;
-	while (rule_list->len > offset) {
-		const char *src_rule = rule_list->data + offset;
+{ // scope++
+	struct ksu_hide_buf *rule_buf __cleanup(ksu_selinux_hide_put_buf) = ksu_selinux_hide_get_buf(&ksu_hide_rule_list);
+	if (unlikely(!rule_buf))
+		return false;
+	
+	size_t offset = 0;
+	while (rule_buf->len > offset) {
+		const char *src_rule = rule_buf->data + offset;
 		size_t src_sz = strlen(src_rule) + 1;
 
 		const char *tgt_rule = src_rule + src_sz;
 		size_t tgt_sz = strlen(tgt_rule) + 1;
 
-		if (strstr(str, src_rule) && strstr(str2, tgt_rule)) {
-			ret = true;
-			goto out;
-		}
+		if (strstr(str, src_rule) && strstr(str2, tgt_rule))
+			return true;
 
 		offset = offset + src_sz + tgt_sz;
 	}
-
-out:
-	rcu_read_unlock();
-	return ret;
+} // scope--
+	return false;
 }
 
 #endif
