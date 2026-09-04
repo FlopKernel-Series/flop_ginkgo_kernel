@@ -460,9 +460,8 @@ static inline u64 ksu_ktime_get_ns(void) { return ktime_to_ns(ktime_get()); }
 #define ktime_get_ns ksu_ktime_get_ns
 #endif
 
-// WARNING: no overflow safety!
-#ifndef struct_size
-#define struct_size(p, member, n) (sizeof(*(p)) + (n) * sizeof(*(p)->member))
+#if LINUX_VERSION_CODE < KERNEL_VERSION (4, 18, 0)
+#include "external/linux_overflow.h"
 #endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION (3, 4, 0)
